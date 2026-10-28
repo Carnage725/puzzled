@@ -8,7 +8,8 @@ ready-made puzzles can be filled in advance.
 ## Features
 
 - **Sudoku** 9×9 and 12×12, **Kakuro** 4x4, 6x6, 8x8, 9x11 and 10x10
-- Four difficulties: easy, medium, hard, expert, rated by the techniques a solver needs
+- Four difficulties: easy, medium, hard, expert, rated by the techniques a solver needs,
+  plus `mixed` books that get harder as you go
 - A4 PDFs with 1, 2, 4 or 6 puzzles per page, numbered labels and page numbers
 - Solutions at the end, packed as densely as stays readable (up to 20 per page)
 - Arrow-key menus, or plain command-line options for scripting
@@ -53,12 +54,16 @@ python puzzled.py kakuro --size 8x8 --difficulty expert --count 8 --per-page 2 -
 | Option         | Values                                                     | Default                          |
 |----------------|------------------------------------------------------------|----------------------------------|
 | `--size`       | Sudoku `9`, `12` · Kakuro `4x4`, `6x6`, `8x8`, `9x11`, `10x10` | `9` / `8x8`                   |
-| `--difficulty` | `easy`, `medium`, `hard`, `expert`                         | `medium`                         |
+| `--difficulty` | `easy`, `medium`, `hard`, `expert`, `mixed`                | `medium`                         |
 | `--count`      | 1 to 1000                                                  | 12                               |
 | `--per-page`   | `1`, `2`, `4`, `6` (6 not for Kakuro 8x8 and larger)       | 4                                |
 | `--out`        | file name                                                  | `<game>_<size>_<difficulty>.pdf` |
 | `--seed`       | any integer, for repeatable runs                           | random                           |
 | `--no-db`      | skip the database                                          | off                              |
+
+`mixed` makes a puzzle book that gets harder as you go: 10% easy, 20% medium, 30% hard
+and 40% expert, in that order. The count must be a multiple of 10, so `--count 20` gives
+2 easy, 4 medium, 6 hard and 8 expert.
 
 PDFs are saved to `pdfs/<game>/<size>/`, for example `pdfs/kakuro/8x8/kakuro_8x8_hard.pdf`.
 

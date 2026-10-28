@@ -50,6 +50,10 @@ SIX_FIT = {"9", "12", "4x4", "6x6"}       # sizes that stay writable at 6 per pa
 SudokuSizeOpt = Annotated[Optional[str], typer.Option("--size", help="9 or 12 (default 9).")]
 KakuroSizeOpt = Annotated[Optional[str], typer.Option("--size", help="White area: 4x4, 6x6, 8x8, 9x11 or 10x10 (default 8x8).")]
 DifficultyOpt = Annotated[Optional[Difficulty], typer.Option(help="Difficulty (default medium).")]
+PdfDifficultyOpt = Annotated[Optional[Literal["easy", "medium", "hard", "expert", "mixed"]], typer.Option(
+    help="Difficulty (default medium). mixed: 10% easy, 20% medium, 30% hard, 40% expert, easiest first; "
+         "count must be a multiple of 10.")]
+MIX = (1, 2, 3, 4)                         # tenths of a mixed PDF per difficulty, easy to expert
 CountOpt = Annotated[Optional[int], typer.Option(min=1, max=1000, help="How many puzzles (default 12).")]
 BankCountOpt = Annotated[Optional[int], typer.Option(min=1, max=5000, help="How many puzzles to add.")]
 HALF_CORES = max(1, (os.cpu_count() or 2) // 2)
@@ -106,11 +110,14 @@ def _settings(sizes, default_size, size, difficulty, count, per_page):
     """Arrow-key menus when no setting was given on the command line, defaults otherwise."""
     if all(v is None for v in (size, difficulty, count, per_page)):
         size = questionary.select("Size", choices=sizes, default=default_size).unsafe_ask()
-        difficulty = questionary.select("Difficulty", choices=list(S.DIFFICULTIES),
+        difficulty = questionary.select("Difficulty", choices=[*S.DIFFICULTIES, "mixed"],
                                         default="medium").unsafe_ask()
-        count = int(questionary.text("How many puzzles", default="12",
-                                     validate=lambda s: s.isdigit() and 1 <= int(s) <= 1000
-                                     or "Enter a number from 1 to 1000").unsafe_ask())
+        step = 10 if difficulty == "mixed" else 1
+        count = int(questionary.text("How many puzzles" + (" (multiple of 10)" if step == 10 else ""),
+                                     default="20" if step == 10 else "12",
+                                     validate=lambda s: s.isdigit() and 1 <= int(s) <= 1000 and int(s) % step == 0
+                                     or f"Enter a number from 1 to 1000{', a multiple of 10' if step == 10 else ''}"
+                                     ).unsafe_ask())
         fits = [str(k) for k in PER_PAGE if k < 6 or size in SIX_FIT]
         per_page = int(questionary.select("Puzzles per page", choices=fits, default="4").unsafe_ask())
     size = size or default_size
@@ -121,7 +128,11 @@ def _settings(sizes, default_size, size, difficulty, count, per_page):
         raise typer.BadParameter("choose 1, 2, 4 or 6", param_hint="--per-page")
     if per_page == 6 and size not in SIX_FIT:
         raise typer.BadParameter("6 per page only fits Kakuro 4x4 and 6x6", param_hint="--per-page")
-    return size, difficulty or "medium", count or 12, per_page
+    difficulty, count = difficulty or "medium", count or (20 if difficulty == "mixed" else 12)
+    if difficulty == "mixed" and count % 10:
+        raise typer.BadParameter("mixed needs a multiple of 10 (10% easy, 20% medium, 30% hard, 40% expert)",
+                                 param_hint="--count")
+    return size, difficulty, count, per_page
 
 
 def _free_name(path):
@@ -185,11 +196,17 @@ def _make(game, size, difficulty, count, per_page, out, seed, no_db):
     g = GAMES[game]
     label = g["label"](size)
     start = time.time()
+    plan = list(zip(S.DIFFICULTIES, (count * k // 10 for k in MIX))) if difficulty == "mixed" \
+        else [(difficulty, count)]
+    rng = random.Random(seed)
     conn = _open_db(no_db)
     try:
-        picked = db.take_bank(conn, game, label, difficulty, count) if conn else []
-        seen = {g["key"](p) for _pid, p in picked}
-        items = picked + _generate(game, size, difficulty, count - len(picked), random.Random(seed), conn, seen)
+        items, seen, banked = [], set(), 0
+        for diff, n in plan:                         # easiest first
+            picked = db.take_bank(conn, game, label, diff, n) if conn else []
+            seen.update(g["key"](p) for _pid, p in picked)
+            items += picked + _generate(game, size, diff, n - len(picked), rng, conn, seen)
+            banked += len(picked)
         folder = PDF_DIR / game / label
         folder.mkdir(parents=True, exist_ok=True)
         path = _free_name(str(folder / Path(out or f"{game}_{label}_{difficulty}.pdf").name))
@@ -203,8 +220,11 @@ def _make(game, size, difficulty, count, per_page, out, seed, no_db):
             conn.close()
     table = Table(show_header=False, box=None, padding=(0, 2))
     table.add_row("[bold green]Wrote", os.path.relpath(path))
-    table.add_row("Puzzles", f"{count} {label} {difficulty} {game.title()}"
-                  + (f" ({len(picked)} from bank, {count - len(picked)} new)" if conn else ""))
+    parts = [", ".join(f"{n} {d}" for d, n in plan)] if difficulty == "mixed" else []
+    if conn:
+        parts.append(f"{banked} from bank, {count - banked} new")
+    detail = f" ({'; '.join(parts)})" if parts else ""
+    table.add_row("Puzzles", f"{count} {label} {difficulty} {game.title()}{detail}")
     table.add_row("Pages", f"{pages} ({per_page} per page, solutions at the end)")
     table.add_row("Repeats", "none, checked against the whole database" if conn else "none in this PDF")
     table.add_row("Database", f"saved as PDF #{pdf_id}" if conn else "[yellow]not saved")
@@ -213,7 +233,7 @@ def _make(game, size, difficulty, count, per_page, out, seed, no_db):
 
 
 @app.command()
-def sudoku(size: SudokuSizeOpt = None, difficulty: DifficultyOpt = None, count: CountOpt = None,
+def sudoku(size: SudokuSizeOpt = None, difficulty: PdfDifficultyOpt = None, count: CountOpt = None,
            per_page: PerPageOpt = None, out: OutOpt = None, seed: SeedOpt = None, no_db: NoDbOpt = False):
     """Sudoku PDF, sizes 9 and 12. No options: arrow-key menus."""
     size, difficulty, count, per_page = _settings(SUDOKU_SIZES, "9", size, difficulty, count, per_page)
@@ -221,7 +241,7 @@ def sudoku(size: SudokuSizeOpt = None, difficulty: DifficultyOpt = None, count: 
 
 
 @app.command()
-def kakuro(size: KakuroSizeOpt = None, difficulty: DifficultyOpt = None, count: CountOpt = None,
+def kakuro(size: KakuroSizeOpt = None, difficulty: PdfDifficultyOpt = None, count: CountOpt = None,
            per_page: PerPageOpt = None, out: OutOpt = None, seed: SeedOpt = None, no_db: NoDbOpt = False):
     """Kakuro PDF, white-area sizes 4x4, 6x6, 8x8, 9x11, 10x10 (clue row and column are extra). No options: arrow-key menus."""
     size, difficulty, count, per_page = _settings(KAKURO_SIZES, "8x8", size, difficulty, count, per_page)
