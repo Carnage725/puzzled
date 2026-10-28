@@ -97,17 +97,17 @@ python puzzled.py kakuro --size 8x8 --difficulty expert --count 8 --per-page 2 -
 |----------------|------------------------------------------------------------|----------------------------------|
 | `--size`       | Sudoku `9`, `12` · Kakuro `4x4`, `6x6`, `8x8`, `9x11`, `10x10` | `9` / `8x8`                   |
 | `--difficulty` | `easy`, `medium`, `hard`, `expert`, `mixed`, `balanced`    | `medium`                         |
-| `--count`      | 1 to 1000                                                  | 12                               |
+| `--count`      | 1 to 10000                                                 | 12                               |
 | `--per-page`   | `1`, `2`, `4`, `6` (6 not for Kakuro 8x8 and larger)       | 4                                |
 | `--out`        | file name                                                  | `<game>_<size>_<difficulty>.pdf` |
 | `--seed`       | any integer, for repeatable runs                           | random                           |
-| `--from-db`    | build only from stored puzzles, generate nothing           | off                              |
+| `--from-db`    | reuse stored puzzles, generate only what is missing        | off                              |
 | `--nuclear`    | every stored puzzle of that size, all difficulties         | off                              |
 | `--no-db`      | skip the database                                          | off                              |
 
 `--from-db` reuses puzzles from earlier runs: it picks stored puzzles of that size and
-difficulty at random, printed before or still in the bank, and generates nothing. It stops
-with a message if not enough are stored.
+difficulty at random, printed before or still in the bank. If too few are stored, it
+generates the missing ones (saved and checked against the database like any new puzzle).
 
 `--nuclear` prints every stored puzzle of one size, printed before or banked, all
 difficulties, easiest first, as `<game>_<size>_all.pdf`. It generates nothing and ignores

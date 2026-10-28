@@ -57,15 +57,15 @@ PdfDifficultyOpt = Annotated[Optional[Literal["easy", "medium", "hard", "expert"
 MIXES = {"mixed": (1, 2, 3, 4), "balanced": (1, 1, 1, 1)}
 NEW_PUZZLES, REUSE_PUZZLES = "New puzzles (bank first)", "Reuse puzzles already in the database"
 NUCLEAR = "Nuclear: every stored puzzle of one size, all difficulties"
-CountOpt = Annotated[Optional[int], typer.Option(min=1, max=1000, help="How many puzzles (default 12).")]
-BankCountOpt = Annotated[Optional[int], typer.Option(min=1, max=5000, help="How many puzzles to add.")]
+CountOpt = Annotated[Optional[int], typer.Option(min=1, max=10000, help="How many puzzles (default 12).")]
+BankCountOpt = Annotated[Optional[int], typer.Option(min=1, max=10000, help="How many puzzles to add.")]
 HALF_CORES = max(1, (os.cpu_count() or 2) // 2)
 ForeverOpt = Annotated[bool, typer.Option("--forever", help="Keep going until you type q + Enter or press Ctrl-C.")]
 CoresOpt = Annotated[Optional[int], typer.Option(min=1, help=f"CPU cores for --forever (default {HALF_CORES}, half).")]
 PerPageOpt = Annotated[Optional[int], typer.Option(help="Puzzles per page: 1, 2, 4 or 6 (default 4; 6 not for Kakuro 8x8 and up).")]
 OutOpt = Annotated[Optional[str], typer.Option(help="File name (default <game>_<size>_<difficulty>.pdf), saved in pdfs/<game>/<size>/. Never overwritten: adds _2, _3 ...")]
 SeedOpt = Annotated[Optional[int], typer.Option(help="Seed for repeatable puzzles.")]
-FromDbOpt = Annotated[bool, typer.Option("--from-db", help="Build the PDF only from puzzles already stored (printed before or banked), picked at random; generate nothing.")]
+FromDbOpt = Annotated[bool, typer.Option("--from-db", help="Build the PDF from puzzles already stored (printed before or banked), picked at random; new ones are generated only if too few are stored.")]
 NuclearOpt = Annotated[bool, typer.Option("--nuclear", help="Print every stored puzzle of this size, all difficulties, easiest first; generate nothing. Ignores --difficulty and --count.")]
 NoDbOpt = Annotated[bool, typer.Option("--no-db", help="Don't use the database: no bank, no saving, repeats checked only inside this PDF.")]
 
@@ -126,9 +126,9 @@ def _settings(sizes, default_size, size, difficulty, count, per_page, from_db=Fa
             step = sum(MIXES.get(difficulty, (1,)))
             count = int(questionary.text("How many puzzles" + (f" (multiple of {step})" if step > 1 else ""),
                                          default="20" if step > 1 else "12",
-                                         validate=lambda s: s.isdigit() and 1 <= int(s) <= 1000
+                                         validate=lambda s: s.isdigit() and 1 <= int(s) <= 10000
                                          and int(s) % step == 0
-                                         or f"Enter a number from 1 to 1000{f', a multiple of {step}' if step > 1 else ''}"
+                                         or f"Enter a number from 1 to 10000{f', a multiple of {step}' if step > 1 else ''}"
                                          ).unsafe_ask())
         fits = [str(k) for k in PER_PAGE if k < 6 or size in SIX_FIT]
         per_page = int(questionary.select("Puzzles per page", choices=fits, default="4").unsafe_ask())
@@ -220,7 +220,7 @@ def _make(game, size, difficulty, count, per_page, out, seed, no_db, from_db=Fal
         raise typer.BadParameter("--from-db needs the database; drop --no-db", param_hint="--from-db")
     conn = _open_db(no_db, required=from_db or nuclear)
     try:
-        items, seen, banked = [], set(), 0
+        items, seen, banked, reused = [], set(), 0, 0
         if nuclear:
             items = db.all_stored(conn, game, label)
             if not items:
@@ -232,10 +232,12 @@ def _make(game, size, difficulty, count, per_page, out, seed, no_db, from_db=Fal
         for diff, n in ([] if nuclear else plan):    # easiest first
             if from_db:
                 picked = db.pick_stored(conn, game, label, diff, n)
-                if len(picked) < n:
-                    console.print(f"[red]Only {len(picked)} {label} {diff} {game.title()} stored, {n} needed.[/] "
-                                  f"Add more with `bank {game}` or lower --count.")
-                    raise typer.Exit(1)
+                reused += len(picked)
+                if len(picked) < n:                  # not enough stored: top up with new puzzles
+                    console.print(f"Only {len(picked)} {label} {diff} {game.title()} stored, "
+                                  f"generating {n - len(picked)} more.")
+                    seen.update(g["key"](p) for _pid, p in picked)
+                    picked += _generate(game, size, diff, n - len(picked), rng, conn, seen)
                 items += picked
                 continue
             picked = db.take_bank(conn, game, label, diff, n) if conn else []
@@ -259,7 +261,8 @@ def _make(game, size, difficulty, count, per_page, out, seed, no_db, from_db=Fal
     if nuclear:
         parts.append("every stored puzzle of this size")
     elif from_db:
-        parts.append("all reused from the database")
+        parts.append("all reused from the database" if reused == count
+                     else f"{reused} reused, {count - reused} new")
     elif conn:
         parts.append(f"{banked} from bank, {count - banked} new")
     detail = f" ({'; '.join(parts)})" if parts else ""
@@ -372,8 +375,8 @@ def _bank_command(game, sizes, default_size, size, difficulty, count, forever, c
                                          or f"Enter a number from 1 to {most}").unsafe_ask())
         else:
             count = int(questionary.text("How many puzzles", default="100",
-                                         validate=lambda s: s.isdigit() and 1 <= int(s) <= 5000
-                                         or "Enter a number from 1 to 5000").unsafe_ask())
+                                         validate=lambda s: s.isdigit() and 1 <= int(s) <= 10000
+                                         or "Enter a number from 1 to 10000").unsafe_ask())
     size = size or default_size
     difficulty = difficulty or "medium"
     cores = cores or HALF_CORES
