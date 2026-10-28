@@ -40,13 +40,18 @@ def test_sudoku_unique_and_solution_matches(n):
 
 def test_pdf_page_count(tmp_path):
     sudokus = [S.generate(4, "easy", random.Random(i)) for i in range(5)]
-    write_pdf(str(tmp_path / "s.pdf"), sudokus, 4, lambda p: (p.n, p.n), draw_sudoku, "Sudoku")
+    write_pdf(str(tmp_path / "s.pdf"), [(sudokus, 4)], lambda p: (p.n, p.n), draw_sudoku, "Sudoku")
     kakuros = [K.generate(4, 4, "easy", random.Random(i)) for i in range(3)]
-    write_pdf(str(tmp_path / "k.pdf"), kakuros, 2, lambda p: (p.cols, p.rows), draw_kakuro, "Kakuro")
+    write_pdf(str(tmp_path / "k.pdf"), [(kakuros, 2)], lambda p: (p.cols, p.rows), draw_kakuro, "Kakuro")
     # 5 puzzles at 4 per page (2 pages) + solutions at 8 per page (1 page)
     assert len(re.findall(rb"/Type /Page\b(?!s)", (tmp_path / "s.pdf").read_bytes())) == 3
     # 3 puzzles at 2 per page (2 pages) + solutions at 4 per page (1 page)
     assert len(re.findall(rb"/Type /Page\b(?!s)", (tmp_path / "k.pdf").read_bytes())) == 3
+    # sections start new pages: 3 at 6 (1) + 3 at 2 (2) puzzle pages, one solution page each
+    small = [K.generate(6, 6, "easy", random.Random(i)) for i in range(3)]
+    write_pdf(str(tmp_path / "m.pdf"), [(kakuros, 6), (small, 2)], lambda p: (p.cols, p.rows),
+              draw_kakuro, "Kakuro")
+    assert len(re.findall(rb"/Type /Page\b(?!s)", (tmp_path / "m.pdf").read_bytes())) == 5
 
 
 @pytest.fixture

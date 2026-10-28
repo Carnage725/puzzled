@@ -14,6 +14,7 @@ import signal
 import sys
 import threading
 import time
+from itertools import groupby
 from multiprocessing import Pool
 from pathlib import Path
 from typing import Annotated, Literal, Optional
@@ -36,8 +37,11 @@ app = typer.Typer(help="Sudoku and Kakuro puzzles to an A4 PDF, solutions at the
 bank_app = typer.Typer(help="Generate puzzles into the database bank (no PDF); later PDFs use them first.",
                        no_args_is_help=True)
 db_app = typer.Typer(help="Browse the puzzle database.", no_args_is_help=True)
+volume_app = typer.Typer(help="Numbered volumes for publishing; puzzles never repeat across volumes.",
+                         no_args_is_help=True)
 app.add_typer(bank_app, name="bank")
 app.add_typer(db_app, name="db")
+app.add_typer(volume_app, name="volume")
 console = Console()
 PDF_DIR = Path(__file__).resolve().parent / "pdfs"     # pdfs/<game>/<size>/
 
@@ -60,6 +64,10 @@ NUCLEAR = "Nuclear: every stored puzzle of one size, all difficulties"
 CountOpt = Annotated[Optional[int], typer.Option(min=1, max=10000, help="How many puzzles (default 12).")]
 BankCountOpt = Annotated[Optional[int], typer.Option(min=1, max=10000, help="How many puzzles to add.")]
 HALF_CORES = max(1, (os.cpu_count() or 2) // 2)
+# a Kakuro volume, in print order: puzzles per size, split into thirds easy / medium / hard,
+# the remainder expert; puzzles per page for each size
+VOLUME = {"4x4": 10, "6x6": 20, "8x8": 30, "10x10": 40}
+VOLUME_PER_PAGE = {"4x4": 6, "6x6": 6, "8x8": 4, "10x10": 4}
 ForeverOpt = Annotated[bool, typer.Option("--forever", help="Keep going until you type q + Enter or press Ctrl-C.")]
 CoresOpt = Annotated[Optional[int], typer.Option(min=1, help=f"CPU cores for --forever (default {HALF_CORES}, half).")]
 PerPageOpt = Annotated[Optional[int], typer.Option(help="Puzzles per page: 1, 2, 4 or 6 (default 4; 6 not for Kakuro 8x8 and up).")]
@@ -176,8 +184,8 @@ def _open_db(no_db, required=False):
         return None
 
 
-def _generate(game, size, difficulty, n, rng, conn, seen):
-    """n new puzzles as (db id or None, puzzle) on all cores. A puzzle already in
+def _generate(game, size, difficulty, n, rng, conn, seen, cores=None):
+    """n new puzzles as (db id or None, puzzle) on `cores` cores (default all). A puzzle already in
     `seen` or in the database is replaced by a fresh one."""
     g = GAMES[game]
     new_job = lambda: g["job"](size, difficulty, rng.getrandbits(64))
@@ -186,7 +194,7 @@ def _generate(game, size, difficulty, n, rng, conn, seen):
     todo = list(range(n))
     columns = (SpinnerColumn(), TextColumn("[bold]{task.description}"), BarColumn(),
                MofNCompleteColumn(), TimeElapsedColumn(), TextColumn("left"), TimeRemainingColumn())
-    with Progress(*columns, console=console) as progress, Pool(os.cpu_count()) as pool:
+    with Progress(*columns, console=console) as progress, Pool(cores or os.cpu_count()) as pool:
         bar = progress.add_task(f"Generating {g['label'](size)} {difficulty} {game.title()}", total=n)
         while todo:
             redo = []
@@ -247,7 +255,7 @@ def _make(game, size, difficulty, count, per_page, out, seed, no_db, from_db=Fal
         folder = PDF_DIR / game / label
         folder.mkdir(parents=True, exist_ok=True)
         path = _free_name(str(folder / Path(out or f"{game}_{label}_{difficulty}.pdf").name))
-        pages = write_pdf(path, [p for _pid, p in items], per_page, g["shape"], g["draw"], game.title())
+        pages = write_pdf(path, [([p for _pid, p in items], per_page)], g["shape"], g["draw"], game.title())
         if conn:
             pdf_id = db.record_pdf(conn, game, path, label, difficulty, per_page, pages,
                                    [pid for pid, _p in items])
@@ -405,12 +413,67 @@ def bank_kakuro(count: BankCountOpt = None, size: KakuroSizeOpt = None, difficul
 
 
 # --------------------------------------------------------------------------
+# volume
+# --------------------------------------------------------------------------
+def _volume(game, cores):
+    """The next numbered volume: puzzles not yet in any volume, oldest first, then new
+    ones for whatever runs out. Committed on its own, so finished volumes survive a stop."""
+    g = GAMES[game]
+    start = time.time()
+    conn = _open_db(False, required=True)
+    try:
+        number = db.volume_count(conn, game) + 1
+        rng = random.Random()
+        sections, ids, seen, new = [], [], set(), 0
+        for size, n in VOLUME.items():
+            third = n // 3
+            puzzles = []
+            for diff, k in zip(S.DIFFICULTIES, (third, third, third, n - 3 * third)):
+                picked = db.take_unvolumed(conn, game, g["label"](size), diff, k)
+                seen.update(g["key"](p) for _pid, p in picked)
+                if k > len(picked):
+                    fresh = _generate(game, size, diff, k - len(picked), rng, conn, seen, cores)
+                    new += len(fresh)
+                    picked += fresh
+                ids += [pid for pid, _p in picked]
+                puzzles += [p for _pid, p in picked]
+            sections.append((puzzles, VOLUME_PER_PAGE[size]))
+        folder = PDF_DIR / game / "volumes"
+        folder.mkdir(parents=True, exist_ok=True)
+        path = _free_name(str(folder / f"{game}_volume_{number:03d}.pdf"))
+        pages = write_pdf(path, sections, g["shape"], g["draw"], f"{game.title()} Volume {number}")
+        db.record_pdf(conn, game, path, "volume", "mixed", 4, pages, ids)
+        conn.commit()
+    finally:
+        conn.close()
+    console.print(f"[bold green]Volume {number}[/] {os.path.relpath(path)}: {len(ids)} puzzles "
+                  f"({len(ids) - new} stored, {new} new), {pages} pages, {time.time() - start:.1f} s")
+
+
+@volume_app.command("kakuro")
+def volume_kakuro(count: Annotated[Optional[int], typer.Option(min=1, help="How many volumes (default 1).")] = None,
+                  cores: CoresOpt = None):
+    """Make the next Kakuro volume(s): 100 puzzles, 4x4 / 6x6 / 8x8 / 10x10 = 10 / 20 / 30 / 40,
+    each a third easy, medium and hard, the remainder expert. No options: menus."""
+    if count is None and cores is None:
+        count = int(questionary.text("How many volumes", default="1",
+                                     validate=lambda s: s.isdigit() and int(s) >= 1
+                                     or "Enter a number of 1 or more").unsafe_ask())
+        most = os.cpu_count() or 1
+        cores = int(questionary.text(f"CPU cores to use (1-{most})", default=str(HALF_CORES),
+                                     validate=lambda s: s.isdigit() and 1 <= int(s) <= most
+                                     or f"Enter a number from 1 to {most}").unsafe_ask())
+    for _ in range(count or 1):
+        _volume("kakuro", cores or HALF_CORES)
+
+
+# --------------------------------------------------------------------------
 # db
 # --------------------------------------------------------------------------
 def _table(title, headers, rows):
     t = Table(title=title, title_justify="left")
     for h in headers:
-        t.add_column(h, justify="right" if h in ("#", "Id", "Total", "Printed", "In bank", "Puzzles",
+        t.add_column(h, justify="right" if h in ("#", "Id", "Total", "Printed", "In bank", "Not in a volume", "Puzzles",
                                                   "Pages", "Givens", "White") else "left")
     for r in rows:
         t.add_row(*("" if v is None else str(v) for v in r))
@@ -419,9 +482,10 @@ def _table(title, headers, rows):
 
 @db_app.command()
 def stats():
-    """Puzzle counts per game, size and difficulty: total, printed, in bank."""
+    """Puzzle counts per game, size and difficulty: total, printed, in bank, not in a volume yet."""
     with _open_db(False, required=True) as conn:
-        _table("Puzzles", ["Game", "Size", "Difficulty", "Total", "Printed", "In bank"], db.stats(conn))
+        _table("Puzzles", ["Game", "Size", "Difficulty", "Total", "Printed", "In bank", "Not in a volume"],
+               db.stats(conn))
 
 
 @db_app.command("list")
@@ -456,10 +520,15 @@ def reprint(pdf_id: Annotated[int, typer.Argument(help="PDF id from `db pdfs`.")
         found = db.pdf_puzzles(conn, pdf_id)
     if found is None:
         raise typer.BadParameter(f"no PDF with id {pdf_id}; see `db pdfs`", param_hint="PDF_ID")
-    (_id, game, path, _size, _difficulty, per_page), puzzles = found
+    (_id, game, path, size, _difficulty, per_page), puzzles = found
+    shape = GAMES[game]["shape"]
+    # volumes and the earlier mixed-size PDFs: one section per size, each with its own per page
+    sections = [(ps := list(run), VOLUME_PER_PAGE[f"{ps[0].cols - 1}x{ps[0].rows - 1}"])
+                for _shape, run in groupby(puzzles, shape)] if size in ("volume", "mixed") \
+        else [(puzzles, per_page)]
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     path = _free_name(path)
-    pages = write_pdf(path, puzzles, per_page, GAMES[game]["shape"], GAMES[game]["draw"], game.title())
+    pages = write_pdf(path, sections, shape, GAMES[game]["draw"], game.title())
     console.print(f"[bold green]Wrote[/] {os.path.relpath(path)}: {len(puzzles)} puzzles, {pages} pages")
 
 

@@ -29,29 +29,36 @@ SOLVED_GREY = 0.35
 # --------------------------------------------------------------------------
 # PDF
 # --------------------------------------------------------------------------
-def write_pdf(path, puzzles, per_page, shape, draw, title):
-    """shape(p) -> (columns, rows) of cells; draw(c, p, x, y, cell, solved) with
-    (x, y) the grid's top-left corner. Returns the page count."""
+def write_pdf(path, sections, shape, draw, title):
+    """sections: [(puzzles, per_page)], each starting on a new page, numbered on from
+    the one before; their solutions follow in the same order. shape(p) -> (columns, rows)
+    of cells, the same within a section; draw(c, p, x, y, cell, solved) with (x, y) the
+    grid's top-left corner. Returns the page count."""
     page_w, page_h = A4
-    gc, gr = shape(puzzles[0])
     sol_top = page_h - MARGIN - HEADING
-    sol_layout = next((lay for lay in SOLUTION_LAYOUTS
-                       if _cell(lay, sol_top, SOLUTION_GAP, SOLUTION_LABEL, gc, gr) >= MIN_SOLUTION_CELL),
-                      SOLUTION_LAYOUTS[-1])
-    sol_pp = sol_layout[0] * sol_layout[1]
-    total = -(-len(puzzles) // per_page) + -(-len(puzzles) // sol_pp)
+    runs, sol_runs, first = [], [], 0      # (solved, puzzles, first number - 1, per page, layout)
+    for puzzles, per_page in sections:
+        gc, gr = shape(puzzles[0])
+        sol_layout = next((lay for lay in SOLUTION_LAYOUTS
+                           if _cell(lay, sol_top, SOLUTION_GAP, SOLUTION_LABEL, gc, gr) >= MIN_SOLUTION_CELL),
+                          SOLUTION_LAYOUTS[-1])
+        runs.append((False, puzzles, first, per_page, GRID_OF[per_page]))
+        sol_runs.append((True, puzzles, first, sol_layout[0] * sol_layout[1], sol_layout))
+        first += len(puzzles)
+    runs += sol_runs
+    total = sum(-(-len(puzzles) // pp) for _s, puzzles, _f, pp, _l in runs)
     c = canvas.Canvas(path, pagesize=A4)
     c.setTitle(title)
     page = 0
-    for solved, pp, layout in ((False, per_page, GRID_OF[per_page]), (True, sol_pp, sol_layout)):
+    for solved, puzzles, first, pp, layout in runs:
         for start in range(0, len(puzzles), pp):
             page += 1
             top = page_h - MARGIN
-            if solved and start == 0:
+            if solved and first == start == 0:
                 c.setFont("Helvetica-Bold", 18)
                 c.drawCentredString(page_w / 2, top - 6 * mm, "Solutions")
                 top -= HEADING
-            _grids(c, puzzles[start:start + pp], start, layout, top, shape, draw, solved)
+            _grids(c, puzzles[start:start + pp], first + start, layout, top, shape, draw, solved)
             c.setFont("Helvetica", 9)
             c.setFillGray(0.4)
             c.drawCentredString(page_w / 2, MARGIN - 4 * mm, f"Page {page} of {total}")

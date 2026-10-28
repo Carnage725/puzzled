@@ -48,7 +48,8 @@ Run these from the project folder with the virtual environment active
 | `python puzzled.py kakuro` | Make a Kakuro PDF. No options: arrow-key menus, starting with new, reused or nuclear |
 | `python puzzled.py bank sudoku` | Add Sudoku puzzles to the bank, no PDF. No options: menus |
 | `python puzzled.py bank kakuro` | Add Kakuro puzzles to the bank, no PDF. No options: menus |
-| `python puzzled.py db stats` | Count puzzles per game, size and difficulty: total, printed, in bank |
+| `python puzzled.py volume kakuro` | Make the next numbered Kakuro volume(s). No options: asks how many and how many cores |
+| `python puzzled.py db stats` | Count puzzles per game, size and difficulty: total, printed, in bank, not in a volume |
 | `python puzzled.py db list GAME` | Newest puzzles of `sudoku` or `kakuro`, with the PDF each is in |
 | `python puzzled.py db pdfs` | Every PDF made, newest first, with its id |
 | `python puzzled.py db reprint ID` | Rebuild PDF number `ID` from its stored puzzles |
@@ -61,6 +62,7 @@ Run these from the project folder with the virtual environment active
 |---------|---------|
 | `sudoku`, `kakuro` | `--size` · `--difficulty` (`easy` `medium` `hard` `expert` `mixed` `balanced`) · `--count` · `--per-page` · `--out` · `--seed` · `--from-db` · `--nuclear` · `--no-db` |
 | `bank sudoku`, `bank kakuro` | `--size` · `--difficulty` · `--count N` or `--forever` · `--cores` · `--seed` |
+| `volume kakuro` | `--count` (volumes, default 1) · `--cores` |
 | `db list` | `GAME` · `--size` · `--difficulty` · `--bank` · `--limit` |
 | `db pdfs` | `--limit` |
 | `db reprint` | `ID` |
@@ -119,6 +121,22 @@ and 40% expert, in that order. The count must be a multiple of 10, so `--count 2
 
 `balanced` gives 25% of each difficulty, easiest first. The count must be a multiple
 of 4, so `--count 20` gives 5 of each.
+
+**Volumes** are numbered Kakuro books for publishing, 100 puzzles each, in this order:
+
+| Size | Easy | Medium | Hard | Expert | Per page |
+|---|---|---|---|---|---|
+| 4x4 | 3 | 3 | 3 | 1 | 6 |
+| 6x6 | 6 | 6 | 6 | 2 | 6 |
+| 8x8 | 10 | 10 | 10 | 0 | 4 |
+| 10x10 | 13 | 13 | 13 | 1 | 4 |
+
+Each size is a third easy, medium and hard; the remainder is expert. Each size starts a new
+page, solutions at the end. A volume first uses stored puzzles (printed before or banked) that
+are in no volume yet, oldest first, and generates only what runs out, so a puzzle appears in
+at most one volume. `db stats` shows how many are left in the "Not in a volume" column.
+Files go to `pdfs/kakuro/volumes/kakuro_volume_001.pdf`, `_002`, ...; each volume is saved
+as soon as it's done, so stopping a multi-volume run keeps the finished ones.
 
 PDFs are saved to `pdfs/<game>/<size>/`, for example `pdfs/kakuro/8x8/kakuro_8x8_hard.pdf`.
 

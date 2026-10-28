@@ -73,13 +73,18 @@ INSERT INTO pdf_puzzle SELECT pdf_id, pdf_number, id FROM kakuro WHERE pdf_id IS
     ON CONFLICT DO NOTHING;
 CREATE INDEX IF NOT EXISTS sudoku_bank ON sudoku (size, difficulty) WHERE pdf_id IS NULL;
 CREATE INDEX IF NOT EXISTS kakuro_bank ON kakuro (size, difficulty) WHERE pdf_id IS NULL;
+-- a volume is a pdf row with size 'volume'; a puzzle goes in at most one
 CREATE OR REPLACE VIEW sudoku_stats AS
     SELECT size, difficulty, count(*) AS total, count(pdf_id) AS printed,
-           count(*) - count(pdf_id) AS in_bank
+           count(*) - count(pdf_id) AS in_bank,
+           count(*) FILTER (WHERE id NOT IN (SELECT l.puzzle_id FROM pdf_puzzle l JOIN pdf p ON p.id = l.pdf_id
+                                             WHERE p.game = 'sudoku' AND p.size = 'volume')) AS not_in_volume
     FROM sudoku GROUP BY size, difficulty;
 CREATE OR REPLACE VIEW kakuro_stats AS
     SELECT size, difficulty, count(*) AS total, count(pdf_id) AS printed,
-           count(*) - count(pdf_id) AS in_bank
+           count(*) - count(pdf_id) AS in_bank,
+           count(*) FILTER (WHERE id NOT IN (SELECT l.puzzle_id FROM pdf_puzzle l JOIN pdf p ON p.id = l.pdf_id
+                                             WHERE p.game = 'kakuro' AND p.size = 'volume')) AS not_in_volume
     FROM kakuro GROUP BY size, difficulty;
 """
 
@@ -191,8 +196,23 @@ def pick_stored(conn, game, size, difficulty, n):
     return [(r[0], to_puzzle(r[1:])) for r in rows]
 
 
+def take_unvolumed(conn, game, size, difficulty, n):
+    """Up to n stored puzzles (printed or banked) not in any volume yet, oldest first, as (id, puzzle)."""
+    _values, to_puzzle, cols = GAMES[game]
+    rows = conn.execute(sql.SQL("SELECT id, {} FROM {} t WHERE size = %s AND difficulty = %s AND NOT EXISTS"
+                                " (SELECT 1 FROM pdf_puzzle l JOIN pdf p ON p.id = l.pdf_id"
+                                "  WHERE l.puzzle_id = t.id AND p.game = %s AND p.size = 'volume')"
+                                " ORDER BY id LIMIT %s")
+                        .format(sql.SQL(cols), sql.Identifier(game)), (size, difficulty, game, n)).fetchall()
+    return [(r[0], to_puzzle(r[1:])) for r in rows]
+
+
+def volume_count(conn, game):
+    return conn.execute("SELECT count(*) FROM pdf WHERE game = %s AND size = 'volume'", (game,)).fetchone()[0]
+
+
 def stats(conn):
-    """(game, size, difficulty, total, printed, in_bank) rows."""
+    """(game, size, difficulty, total, printed, in_bank, not_in_volume) rows."""
     return conn.execute(
         "SELECT * FROM (SELECT 'sudoku' AS game, * FROM sudoku_stats"
         " UNION ALL SELECT 'kakuro', * FROM kakuro_stats) s"
