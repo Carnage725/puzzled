@@ -9,3 +9,6 @@ pdfs/**/*.pdf
 
 # macOS
 .DS_Store
+
+# Local assistant instructions
+CLAUDE.md
