@@ -1,5 +1,4 @@
 """Run with:  .venv/bin/python -m pytest -q test_engines.py"""
-import math
 import random
 import re
 
@@ -20,15 +19,15 @@ def test_kakuro_unique_and_rated(size, difficulty):
         assert len(m.solutions(2)) == 1
         assert m.rate() == K.LEVEL_OF[difficulty]
         want = K.LEVEL_OF[difficulty]
-        if want in K.MIN_STEPS:      # consistently that hard, not one lucky step
-            assert K.level_steps(m, want) >= max(2, math.ceil(K.MIN_STEPS[want] * m.m))
+        assert K.level_steps(m, want) >= K.min_steps(want, m.m)   # consistently that hard
 
 
 def test_kakuro_expert_small():
     p = K.generate(6, 6, "expert", random.Random(0))
     m = K.Model.from_solution(p.white, p.solution)
     assert len(m.solutions(2)) == 1
-    assert m.rate() == 4
+    assert m.rate() == 4                                     # logic only: 5 would mean guessing
+    assert K.level_steps(m, 4) >= K.min_steps(4, m.m)
 
 
 @pytest.mark.parametrize("n", [4, 6, 9])

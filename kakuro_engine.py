@@ -13,9 +13,13 @@ Generation pipeline
        target level, until the level below no longer solves it. Levels:
 
         level 1 (easy)   sum-combination tables + elimination of solved digits
-        level 2 (medium) + required digits, naked pairs inside a run
+        level 2 (medium) + required digits, naked pairs inside a run, band sums
+                           (the runs crossing a band of rows / columns pin the
+                           one unknown cell sticking out of it)
         level 3 (hard)   + exact per-run reasoning (every cell/digit pairing)
-        level 4 (expert) trial and error needed
+        level 4 (expert) + one-cell "what if": a candidate is removed when
+                           assuming it breaks the puzzle under level 3
+        level 5          needs real guessing; never generated
 
 Sizes are the white area, width x height; the grid adds the clue row / column
 (an 8x8 Kakuro is drawn as a 9x9 grid).
@@ -41,6 +45,7 @@ for _l in range(2, 10):
         COMBOS.setdefault((_l, sum(_c)), []).append(_m)
 _SUM = [sum(d for d in range(1, 10) if m >> d & 1) for m in range(1024)]
 _EXACT_CACHE: dict = {}   # (run domains, sum) -> Model._exact result
+_BAND_CACHE: dict = {}    # layout -> band shapes, see Model._find_bands
 
 # layout parameters per difficulty
 PARAMS = {
@@ -51,9 +56,10 @@ PARAMS = {
 }
 # probability a cell prefers digits that push its runs toward unique partitions
 FILL_BIAS = {"easy": 0.9, "medium": 0.6, "hard": 0.4, "expert": 0.4}
-# medium / hard puzzles must need at least this share of white cells (rounded up,
-# minimum 2) in deductions of their own level, so they are consistently that hard
-MIN_STEPS = {2: 0.05, 3: 0.09}
+# medium / hard / expert puzzles must need at least this share of white cells
+# (rounded up, never below the floor) in deductions of their own level, so they
+# are consistently that hard: level -> (share, floor)
+MIN_STEPS = {2: (0.05, 2), 3: (0.09, 2), 4: (0.03, 1)}
 
 
 # --------------------------------------------------------------------------
@@ -250,6 +256,7 @@ class Model:
         for ri, cells in enumerate(self.run_cells):
             for c in cells:
                 self.cell_runs[c].append(ri)
+        self.bands = self._find_bands()
 
     @classmethod
     def from_solution(cls, white, solution):
@@ -405,20 +412,14 @@ class Model:
         return True
 
     # -- search / rating -------------------------------------------------------
-    def solutions(self, limit=2, level=2, node_limit=None):
-        """Up to `limit` solutions as {(r, c): digit} dictionaries.
-        None if the search needs more than `node_limit` nodes."""
+    def solutions(self, limit=2, level=2):
+        """Up to `limit` solutions as {(r, c): digit} dictionaries."""
         dom = [FULL] * self.m
         if not self.propagate(dom, level):
             return []
         found = []
-        nodes = 0
 
         def rec(dom):
-            nonlocal nodes
-            nodes += 1
-            if node_limit is not None and nodes > node_limit:
-                return True
             best, bc = -1, 99
             for i, d in enumerate(dom):
                 if d & (d - 1):
@@ -441,17 +442,120 @@ class Model:
             return False
 
         rec(dom)
-        if node_limit is not None and nodes > node_limit:
-            return None
         inv = {i: p for p, i in self.idx.items()}
         return [{inv[i]: d.bit_length() - 1 for i, d in enumerate(sol)} for sol in found]
 
+    # -- band sums (level 2) ---------------------------------------------------
+    def _find_bands(self):
+        """(cells sticking out, their total) for every band of consecutive rows or
+        columns. The across runs inside a band of rows cover exactly its white
+        cells, so the down runs crossing it, minus those across runs, add up to
+        the down-run cells outside the band (and the same with rows and columns
+        swapped). The shapes depend only on the layout and are cached."""
+        key = tuple(map(tuple, self.white))
+        if key not in _BAND_CACHE:
+            if len(_BAND_CACHE) > 2000:
+                _BAND_CACHE.clear()
+            shapes = []
+            for kind, axis in (("A", 0), ("D", 1)):
+                lines = sorted({p[axis] for _k, cells in self.runs for p in cells})
+                for i, lo in enumerate(lines):
+                    for hi in lines[i:]:
+                        inside = lambda p: lo <= p[axis] <= hi
+                        plus, minus, out = [], [], []
+                        for ri, (k, cells) in enumerate(self.runs):
+                            if k == kind and inside(cells[0]):
+                                minus.append(ri)
+                            elif k != kind and any(map(inside, cells)):
+                                plus.append(ri)
+                                out += [self.idx[p] for p in cells if not inside(p)]
+                        if out:
+                            shapes.append((out, plus, minus))
+            _BAND_CACHE[key] = shapes
+        return [(out, sum(self.run_sum[r] for r in plus) - sum(self.run_sum[r] for r in minus))
+                for out, plus, minus in _BAND_CACHE[key]]
+
+    def _regions(self, dom):
+        """Fix the single unsolved cell sticking out of a band. Changed cells, or
+        None on a contradiction."""
+        changed = []
+        for out, total in self.bands:
+            unknown = None
+            for c in out:
+                d = dom[c]
+                if d & (d - 1):
+                    if unknown is not None:
+                        break
+                    unknown = c
+                else:
+                    total -= d.bit_length() - 1
+            else:
+                if unknown is None:
+                    if total:
+                        return None
+                    continue
+                if not 1 <= total <= 9 or not dom[unknown] >> total & 1:
+                    return None
+                dom[unknown] = 1 << total
+                changed.append(unknown)
+        return changed
+
+    # -- one-cell what-if (level 4) ---------------------------------------------
+    def _shave(self, dom):
+        """Remove the candidates of one cell that break the puzzle under level 3.
+        True if something was removed, None on a contradiction."""
+        for i in sorted((i for i, d in enumerate(dom) if d & (d - 1)), key=lambda i: dom[i].bit_count()):
+            d, removed = dom[i], False
+            while d:
+                b = d & -d
+                d ^= b
+                trial = dom[:]
+                trial[i] = b
+                if not self.solve(trial, 3):
+                    dom[i] &= ~b
+                    removed = True
+            if not dom[i]:
+                return None
+            if removed:
+                return True
+        return False
+
+    def solve(self, dom, level):
+        """Narrow `dom` with every rule up to `level` until nothing changes.
+        False on a contradiction."""
+        while True:
+            for lv in range(min(level, 2), min(level, 3) + 1):     # cheaper rules first
+                if not self.propagate(dom, lv):
+                    return False
+            if level >= 2:
+                changed = self._regions(dom)
+                if changed is None:
+                    return False
+                if changed:
+                    continue
+            if level >= 4:
+                shaved = self._shave(dom)
+                if shaved is None:
+                    return False
+                if shaved:
+                    continue
+            return True
+
+    def step(self, dom, level):
+        """Apply one deduction of `level` itself. True if anything changed."""
+        if level == 4:
+            return bool(self._shave(dom))
+        if any(self._run(dom, ri, level) for ri in range(len(self.run_cells))):
+            return True
+        return level == 2 and bool(self._regions(dom))
+
     def rate(self):
-        for level in (1, 2, 3):
+        """Lowest level that solves the puzzle; 5 if it needs real guessing."""
+        for level in (1, 2, 3, 4):
             dom = [FULL] * self.m
-            if self.propagate(dom, level) and all(not d & (d - 1) for d in dom):
+            if self.solve(dom, level) and all(not d & (d - 1) for d in dom):
                 return level
-        return 4
+        return 5
 
 
 # --------------------------------------------------------------------------
@@ -475,18 +579,10 @@ class KakuroPuzzle:
 
 
 def _stuck(model, level):
-    """Indices of cells propagation at `level` leaves unsolved ([] = solved, so unique)."""
+    """Indices of cells the rules up to `level` leave unsolved ([] = solved, so unique)."""
     dom = [FULL] * model.m
-    # never fails: the clues come from a real filling. Cheaper levels first narrow
-    # the domains; the fixpoint is the same, but level 3's exact pass gets cheaper
-    for lv in range(min(level, 2), level + 1):
-        model.propagate(dom, lv)
+    model.solve(dom, level)                  # never fails: the clues come from a real filling
     return [i for i, d in enumerate(dom) if d & (d - 1)]
-
-
-def _unique(model, node_limit=3000):
-    sols = model.solutions(2, 3, node_limit)
-    return sols is not None and len(sols) == 1
 
 
 class _Digits:
@@ -531,21 +627,28 @@ def level_steps(model, level):
     level-`level` deduction before the puzzle is solved: the amount of work at
     that level. The puzzle must be solvable at `level`."""
     dom = [FULL] * model.m
-    for lv in range(1, level):
-        model.propagate(dom, lv)
+    model.solve(dom, level - 1)
     steps = 0
     while any(d & (d - 1) for d in dom):
-        next(ri for ri in range(len(model.run_cells)) if model._run(dom, ri, level))
+        model.step(dom, level)
         steps += 1
-        model.propagate(dom, level - 1)
+        model.solve(dom, level - 1)
     return steps
+
+
+def min_steps(level, white_cells):
+    """Deductions at `level` a puzzle with this many white cells must need."""
+    if level not in MIN_STEPS:
+        return 0
+    share, floor = MIN_STEPS[level]
+    return max(floor, math.ceil(share * white_cells))
 
 
 def _harden(digits, model, want, rng, steps=300):
     """Edit digits while the puzzle stays uniquely solvable at level `want`
-    (by search for expert) until level want-1 no longer solves it and, for
-    medium and hard, it needs at least MIN_STEPS deductions at level `want`."""
-    target = max(2, math.ceil(MIN_STEPS[want] * model.m)) if want in MIN_STEPS else 0
+    until level want-1 no longer solves it and it needs at least MIN_STEPS
+    deductions at level `want`."""
+    target = min_steps(want, model.m)
     below_solves = not _stuck(model, want - 1)
     for _ in range(steps):
         if not below_solves and (not target or level_steps(model, want) >= target):
@@ -558,13 +661,8 @@ def _harden(digits, model, want, rng, steps=300):
         old = digits.sol[r][c]
         digits.sol[r][c] = rng.choice(opts)
         cand = digits.model()
-        if want == 4:
-            # solved by level 3 means unique already; search only when it gets stuck
-            cand_below_solves = not _stuck(cand, 3)
-            ok = cand_below_solves or _unique(cand)
-        else:
-            ok = not _stuck(cand, want)
-            cand_below_solves = ok and not _stuck(cand, want - 1)
+        cand_below_solves = not _stuck(cand, want - 1)
+        ok = cand_below_solves or not _stuck(cand, want)
         if ok:
             model, below_solves = cand, cand_below_solves
         else:

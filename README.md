@@ -117,16 +117,19 @@ solving tricks sorted from simple to clever, and it grades a puzzle like this:
 1. Give the robot only the **easy** tricks. If it can finish, the puzzle is **easy**.
 2. Stuck? Also give it the **medium** tricks. If it can finish now, the puzzle is **medium**.
 3. Still stuck? Add the **hard** tricks.
-4. If even that is not enough and you would have to guess, the puzzle is **expert**.
+4. Still stuck? Add the **expert** tricks. In Sudoku that is anything beyond hard; in
+   Kakuro it is the one-cell "what if" check described below.
 
 So "hard" means: you cannot finish without hard tricks, but you never need to guess.
-Every puzzle is checked this way before it is printed.
+Kakuro puzzles never need guessing at any level, expert included. Every puzzle is
+checked this way before it is printed.
 
 For Kakuro, one hard trick is not enough to count as hard. The robot also counts how many
-times it gets stuck and needs a trick of the puzzle's level: medium and hard puzzles must
-need it at least a set number of times, about 5% (medium) or 9% (hard) of the white
-cells, and never fewer than 2. A 10x10 hard Kakuro therefore needs at least 7 hard steps,
-so every hard puzzle feels properly hard instead of being easy with one tricky moment.
+times it gets stuck and needs a trick of the puzzle's level. Medium, hard and expert
+puzzles must need it a minimum number of times: about 5%, 9% and 3% of the white cells,
+and at least 2 for medium and hard (1 for expert). A 10x10 hard Kakuro therefore needs at
+least 7 hard steps, so every hard puzzle feels properly hard instead of being easy with
+one tricky moment.
 
 ### Sudoku tricks
 
@@ -161,11 +164,18 @@ Clues are sums: these cells add up to this number, using 1 to 9 with no repeats.
   "1 or 2" and its down clue says "1 or 3", the only number in both is 1.
 - **Medium.** *Must contain:* 3 cells adding to 23 can only be 6 + 8 + 9, so the run must
   hold a 9; if only one of its cells can take a 9, that cell is the 9. *Pairs:* two cells
-  that can only be 1 or 3 use up the 1 and the 3 for the rest of the run.
+  that can only be 1 or 3 use up the 1 and the 3 for the rest of the run. *Band sums:*
+  take a band of whole rows. Its across clues add up to everything inside the band; the
+  down clues crossing it add up to the same cells plus the cells poking out above and
+  below. The difference is the total of the cells poking out, so if only one of them is
+  still unknown, it is fixed.
 - **Hard.** For one clue, picture every way to fill it that fits what you already know
   about each cell. A digit that never appears in any working way for a cell is crossed
   out. Slow and careful, but still pure logic.
-- **Expert.** Logic runs out; you must guess and check.
+- **Expert.** *What if:* pick a cell that can only be, say, 3 or 7. Pencil in 3 and apply
+  the hard tricks only. If that breaks a clue (a run that can no longer reach its sum),
+  3 was impossible, so the cell is 7. Nothing is kept from the trial; it only rules a
+  number out. It is still logic, never a guess.
 
 **Walkthrough: making a hard Kakuro.**
 1. Draw a pattern of white and grey cells.
@@ -206,26 +216,29 @@ Clues are sums: these cells add up to this number, using 1 to 9 with no repeats.
    lowest or highest free digit and read the clue sums again. When propagation solves every
    cell, the solution is proven unique.
 4. **Harden:** change digits while the puzzle stays uniquely solvable at the requested
-   level, until the level below can no longer solve it and, for medium and hard, the
-   solver needs a minimum number of deductions at that level (`MIN_STEPS`, scaled by the
-   number of white cells). The rating is then exact and the effort consistent.
+   level, until the level below can no longer solve it and the solver needs a minimum
+   number of deductions at that level (`MIN_STEPS`, scaled by the number of white cells).
+   The rating is then exact and the effort consistent.
 
 | Difficulty | Reasoning needed |
 |------------|------------------|
 | easy       | sum combinations, eliminating solved digits |
-| medium     | + digits a run must contain, pairs inside a run |
+| medium     | + digits a run must contain, pairs inside a run, band sums |
 | hard       | + exact per-run reasoning over every cell and digit |
-| expert     | trial and error (uniqueness proven by search) |
+| expert     | + one-cell "what if": a candidate is ruled out when it breaks the puzzle under the hard rules |
+
+Every level is pure logic, and solving every cell by logic proves the solution is unique.
+A puzzle that would need real guessing is never generated.
 
 Average time per puzzle on one core (Apple Silicon, measured during development):
 
 | Size  | easy   | medium | hard   | expert |
 |-------|--------|--------|--------|--------|
-| 4x4   | 0.03 s | 0.17 s | 0.03 s | 0.33 s |
-| 6x6   | 0.04 s | 0.09 s | 0.11 s | 0.21 s |
-| 8x8   | 0.09 s | 0.36 s | 0.46 s | 0.51 s |
-| 9x11  | 0.26 s | 0.55 s | 1.1 s  | 1.1 s  |
-| 10x10 | 0.26 s | 1.2 s  | 1.8 s  | 1.8 s  |
+| 4x4   | 0.05 s | 0.09 s | 0.03 s | 1.6 s  |
+| 6x6   | 0.06 s | 0.10 s | 0.13 s | 1.2 s  |
+| 8x8   | 0.10 s | 0.37 s | 0.67 s | 1.9 s  |
+| 9x11  | 0.46 s | 0.81 s | 1.3 s  | 3.6 s  |
+| 10x10 | 0.24 s | 1.1 s  | 2.9 s  | 4.7 s  |
 
 ### Database (`db.py`)
 
