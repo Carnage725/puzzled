@@ -22,6 +22,7 @@ Sizes are the white area, width x height; the grid adds the clue row / column
 """
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass
 from itertools import combinations
@@ -50,6 +51,9 @@ PARAMS = {
 }
 # probability a cell prefers digits that push its runs toward unique partitions
 FILL_BIAS = {"easy": 0.9, "medium": 0.6, "hard": 0.4, "expert": 0.4}
+# medium / hard puzzles must need at least this share of white cells (rounded up,
+# minimum 2) in deductions of their own level, so they are consistently that hard
+MIN_STEPS = {2: 0.05, 3: 0.09}
 
 
 # --------------------------------------------------------------------------
@@ -522,12 +526,29 @@ def _repair(digits, level, rng, steps=1000):
     return None
 
 
+def level_steps(model, level):
+    """How many times a solver limited to level-1 gets stuck and needs one
+    level-`level` deduction before the puzzle is solved: the amount of work at
+    that level. The puzzle must be solvable at `level`."""
+    dom = [FULL] * model.m
+    for lv in range(1, level):
+        model.propagate(dom, lv)
+    steps = 0
+    while any(d & (d - 1) for d in dom):
+        next(ri for ri in range(len(model.run_cells)) if model._run(dom, ri, level))
+        steps += 1
+        model.propagate(dom, level - 1)
+    return steps
+
+
 def _harden(digits, model, want, rng, steps=300):
     """Edit digits while the puzzle stays uniquely solvable at level `want`
-    (by search for expert) until level want-1 no longer solves it."""
+    (by search for expert) until level want-1 no longer solves it and, for
+    medium and hard, it needs at least MIN_STEPS deductions at level `want`."""
+    target = max(2, math.ceil(MIN_STEPS[want] * model.m)) if want in MIN_STEPS else 0
     below_solves = not _stuck(model, want - 1)
     for _ in range(steps):
-        if not below_solves:
+        if not below_solves and (not target or level_steps(model, want) >= target):
             return model
         i = rng.randrange(len(digits.cells))
         opts = digits.options(i)

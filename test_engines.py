@@ -1,4 +1,5 @@
 """Run with:  .venv/bin/python -m pytest -q test_engines.py"""
+import math
 import random
 import re
 
@@ -18,6 +19,9 @@ def test_kakuro_unique_and_rated(size, difficulty):
         m = K.Model.from_solution(p.white, p.solution)
         assert len(m.solutions(2)) == 1
         assert m.rate() == K.LEVEL_OF[difficulty]
+        want = K.LEVEL_OF[difficulty]
+        if want in K.MIN_STEPS:      # consistently that hard, not one lucky step
+            assert K.level_steps(m, want) >= max(2, math.ceil(K.MIN_STEPS[want] * m.m))
 
 
 def test_kakuro_expert_small():

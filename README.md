@@ -119,8 +119,14 @@ solving tricks sorted from simple to clever, and it grades a puzzle like this:
 3. Still stuck? Add the **hard** tricks.
 4. If even that is not enough and you would have to guess, the puzzle is **expert**.
 
-So "hard" means: you cannot finish without at least one hard trick, but you never need
-to guess. Every puzzle is checked this way before it is printed.
+So "hard" means: you cannot finish without hard tricks, but you never need to guess.
+Every puzzle is checked this way before it is printed.
+
+For Kakuro, one hard trick is not enough to count as hard. The robot also counts how many
+times it gets stuck and needs a trick of the puzzle's level: medium and hard puzzles must
+need it at least a set number of times, about 5% (medium) or 9% (hard) of the white
+cells, and never fewer than 2. A 10x10 hard Kakuro therefore needs at least 7 hard steps,
+so every hard puzzle feels properly hard instead of being easy with one tricky moment.
 
 ### Sudoku tricks
 
@@ -170,9 +176,9 @@ Clues are sums: these cells add up to this number, using 1 to 9 with no repeats.
    telling) and rewrite the clues. Repeat until the robot solves it completely, which
    proves there is only one answer.
 4. *Make it harder.* Tweak digits one at a time, keeping a tweak only if the robot can
-   still solve the puzzle with hard tricks. Stop as soon as medium tricks alone are no
-   longer enough.
-5. That puzzle needs at least one hard trick, never a guess, and has exactly one answer.
+   still solve the puzzle with hard tricks. Stop once medium tricks alone are no longer
+   enough and the robot needs the minimum number of hard steps for that grid size.
+5. That puzzle needs plenty of hard tricks, never a guess, and has exactly one answer.
 
 ## How it works
 
@@ -200,7 +206,9 @@ Clues are sums: these cells add up to this number, using 1 to 9 with no repeats.
    lowest or highest free digit and read the clue sums again. When propagation solves every
    cell, the solution is proven unique.
 4. **Harden:** change digits while the puzzle stays uniquely solvable at the requested
-   level, until the level below can no longer solve it. The rating is then exact.
+   level, until the level below can no longer solve it and, for medium and hard, the
+   solver needs a minimum number of deductions at that level (`MIN_STEPS`, scaled by the
+   number of white cells). The rating is then exact and the effort consistent.
 
 | Difficulty | Reasoning needed |
 |------------|------------------|
@@ -213,11 +221,11 @@ Average time per puzzle on one core (Apple Silicon, measured during development)
 
 | Size  | easy   | medium | hard   | expert |
 |-------|--------|--------|--------|--------|
-| 4x4   | 0.01 s | 0.01 s | 0.01 s | 0.15 s |
-| 6x6   | 0.02 s | 0.05 s | 0.12 s | 0.34 s |
-| 8x8   | 0.05 s | 0.25 s | 1.0 s  | 1.1 s  |
-| 9x11  | 0.45 s | 1.9 s  | 8.4 s  | 8.1 s  |
-| 10x10 | 0.57 s | 1.5 s  | 7.5 s  | 7.6 s  |
+| 4x4   | 0.03 s | 0.17 s | 0.03 s | 0.33 s |
+| 6x6   | 0.04 s | 0.09 s | 0.11 s | 0.21 s |
+| 8x8   | 0.09 s | 0.36 s | 0.46 s | 0.51 s |
+| 9x11  | 0.26 s | 0.55 s | 1.1 s  | 1.1 s  |
+| 10x10 | 0.26 s | 1.2 s  | 1.8 s  | 1.8 s  |
 
 ### Database (`db.py`)
 
