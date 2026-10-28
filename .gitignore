@@ -4,9 +4,6 @@ __pycache__/
 .venv/
 .pytest_cache/
 
-# Generated puzzles (folders kept via .gitkeep)
-pdfs/**/*.pdf
-
 # macOS
 .DS_Store
 

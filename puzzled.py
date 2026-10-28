@@ -64,10 +64,10 @@ NUCLEAR = "Nuclear: every stored puzzle of one size, all difficulties"
 CountOpt = Annotated[Optional[int], typer.Option(min=1, max=10000, help="How many puzzles (default 12).")]
 BankCountOpt = Annotated[Optional[int], typer.Option(min=1, max=10000, help="How many puzzles to add.")]
 HALF_CORES = max(1, (os.cpu_count() or 2) // 2)
-# a Kakuro volume, in print order: puzzles per size, split into thirds easy / medium / hard,
+# a volume, in print order: puzzles per size, split into thirds easy / medium / hard,
 # the remainder expert; puzzles per page for each size
-VOLUME = {"4x4": 10, "6x6": 19, "8x8": 31, "10x10": 40}
-VOLUME_PER_PAGE = {"4x4": 6, "6x6": 6, "8x8": 4, "10x10": 4}
+VOLUME = {"kakuro": {"4x4": 10, "6x6": 19, "8x8": 31, "10x10": 40}, "sudoku": {"9": 71, "12": 29}}
+VOLUME_PER_PAGE = {"4x4": 6, "6x6": 6, "8x8": 4, "10x10": 4, "9": 6, "12": 4}
 ForeverOpt = Annotated[bool, typer.Option("--forever", help="Keep going until you type q + Enter or press Ctrl-C.")]
 CoresOpt = Annotated[Optional[int], typer.Option(min=1, help=f"CPU cores for --forever (default {HALF_CORES}, half).")]
 PerPageOpt = Annotated[Optional[int], typer.Option(help="Puzzles per page: 1, 2, 4 or 6 (default 4; 6 not for Kakuro 8x8 and up).")]
@@ -112,10 +112,12 @@ def _kakuro_job(size, difficulty, seed):
 
 GAMES = {
     "sudoku": dict(task=sudoku_task, job=_sudoku_job, label=lambda size: f"{size}x{size}",
-                   key=lambda p: tuple(p.grid), shape=lambda p: (p.n, p.n), draw=draw_sudoku),
+                   key=lambda p: tuple(p.grid), shape=lambda p: (p.n, p.n), draw=draw_sudoku,
+                   size=lambda p: str(p.n)),
     "kakuro": dict(task=kakuro_task, job=_kakuro_job, label=lambda size: size,
                    key=lambda p: (str(p.white), str(sorted(p.across.items())), str(sorted(p.down.items()))),
-                   shape=lambda p: (p.cols, p.rows), draw=draw_kakuro),
+                   shape=lambda p: (p.cols, p.rows), draw=draw_kakuro,
+                   size=lambda p: f"{p.cols - 1}x{p.rows - 1}"),
 }
 
 
@@ -425,7 +427,7 @@ def _volume(game, cores):
         number = db.volume_count(conn, game) + 1
         rng = random.Random()
         sections, ids, seen, new = [], [], set(), 0
-        for size, n in VOLUME.items():
+        for size, n in VOLUME[game].items():
             third = n // 3
             puzzles = []
             for diff, k in zip(S.DIFFICULTIES, (third, third, third, n - 3 * third)):
@@ -450,11 +452,11 @@ def _volume(game, cores):
                   f"({len(ids) - new} stored, {new} new), {pages} pages, {time.time() - start:.1f} s")
 
 
-@volume_app.command("kakuro")
-def volume_kakuro(count: Annotated[Optional[int], typer.Option(min=1, help="How many volumes (default 1).")] = None,
-                  cores: CoresOpt = None):
-    """Make the next Kakuro volume(s): 100 puzzles, 4x4 / 6x6 / 8x8 / 10x10 = 10 / 19 / 31 / 40,
-    each a third easy, medium and hard, the remainder expert. No options: menus."""
+VolumeCountOpt = Annotated[Optional[int], typer.Option(min=1, help="How many volumes (default 1).")]
+
+
+def _volume_command(game, count, cores):
+    """Menus when no option was given, then `count` volumes one after another."""
     if count is None and cores is None:
         count = int(questionary.text("How many volumes", default="1",
                                      validate=lambda s: s.isdigit() and int(s) >= 1
@@ -464,7 +466,21 @@ def volume_kakuro(count: Annotated[Optional[int], typer.Option(min=1, help="How 
                                      validate=lambda s: s.isdigit() and 1 <= int(s) <= most
                                      or f"Enter a number from 1 to {most}").unsafe_ask())
     for _ in range(count or 1):
-        _volume("kakuro", cores or HALF_CORES)
+        _volume(game, cores or HALF_CORES)
+
+
+@volume_app.command("sudoku")
+def volume_sudoku(count: VolumeCountOpt = None, cores: CoresOpt = None):
+    """Make the next Sudoku volume(s): 100 puzzles, 9x9 / 12x12 = 71 / 29,
+    each a third easy, medium and hard, the remainder expert. No options: menus."""
+    _volume_command("sudoku", count, cores)
+
+
+@volume_app.command("kakuro")
+def volume_kakuro(count: VolumeCountOpt = None, cores: CoresOpt = None):
+    """Make the next Kakuro volume(s): 100 puzzles, 4x4 / 6x6 / 8x8 / 10x10 = 10 / 19 / 31 / 40,
+    each a third easy, medium and hard, the remainder expert. No options: menus."""
+    _volume_command("kakuro", count, cores)
 
 
 # --------------------------------------------------------------------------
@@ -523,7 +539,7 @@ def reprint(pdf_id: Annotated[int, typer.Argument(help="PDF id from `db pdfs`.")
     (_id, game, path, size, _difficulty, per_page), puzzles = found
     shape = GAMES[game]["shape"]
     # volumes and the earlier mixed-size PDFs: one section per size, each with its own per page
-    sections = [(ps := list(run), VOLUME_PER_PAGE[f"{ps[0].cols - 1}x{ps[0].rows - 1}"])
+    sections = [(ps := list(run), VOLUME_PER_PAGE[GAMES[game]["size"](ps[0])])
                 for _shape, run in groupby(puzzles, shape)] if size in ("volume", "mixed") \
         else [(puzzles, per_page)]
     Path(path).parent.mkdir(parents=True, exist_ok=True)
