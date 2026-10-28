@@ -92,6 +92,74 @@ Any PostgreSQL client (TablePlus, pgAdmin, DBeaver) can also open the database
 `puzzled` on `localhost:5432`. The views `sudoku_stats` and `kakuro_stats` give the same
 overview as `db stats`.
 
+## How difficulty is decided, in plain English
+
+Difficulty is not about how many squares are blank. It is about the **hardest trick you
+are forced to use** to finish the puzzle.
+
+The program contains a robot solver that thinks like a person. It has a toolbox of
+solving tricks sorted from simple to clever, and it grades a puzzle like this:
+
+1. Give the robot only the **easy** tricks. If it can finish, the puzzle is **easy**.
+2. Stuck? Also give it the **medium** tricks. If it can finish now, the puzzle is **medium**.
+3. Still stuck? Add the **hard** tricks.
+4. If even that is not enough and you would have to guess, the puzzle is **expert**.
+
+So "hard" means: you cannot finish without at least one hard trick, but you never need
+to guess. Every puzzle is checked this way before it is printed.
+
+### Sudoku tricks
+
+- **Easy.** *Only one number fits this square:* its row has 1, 2, 3, 4, its column has
+  5, 6, 7 and its box has 9, so it must be 8. *Only one square fits this number:* in a
+  row, the 5 cannot go in eight squares, so it goes in the ninth.
+- **Medium.** *Locked in a line:* inside one box the 7 can only sit in the top row, so no
+  other square in that row, outside the box, can be 7. *Pairs:* two squares in a row can
+  each only be 3 or 8; together they use up the 3 and the 8, so no other square in that
+  row can be 3 or 8.
+- **Hard.** The same thinking across bigger patterns, such as three squares sharing three
+  numbers, or a number trapped in a rectangle across two rows (an "X-Wing").
+- **Expert.** None of the tricks work; you must try "what if this is a 4?" and see
+  whether it breaks.
+
+**Walkthrough: making a medium Sudoku.**
+1. Fill a complete, correct 9×9 grid.
+2. Erase numbers one at a time. After each erase, check the puzzle still has exactly one
+   answer; if not, put that number back.
+3. Grade it. With easy tricks the robot gets stuck, so it is not easy. With medium tricks
+   it still gets stuck, so it is harder than medium.
+4. Too hard, so put one erased number back as a free clue and grade again. Repeat until
+   the robot can finish with medium tricks but not with easy ones alone.
+5. That puzzle is exactly medium.
+
+### Kakuro tricks
+
+Clues are sums: these cells add up to this number, using 1 to 9 with no repeats.
+
+- **Easy.** *Sums that can only be made one way:* 2 cells adding to 3 must be 1 and 2;
+  2 cells adding to 17 must be 8 and 9. *Crossing clues:* if a cell's across clue says
+  "1 or 2" and its down clue says "1 or 3", the only number in both is 1.
+- **Medium.** *Must contain:* 3 cells adding to 23 can only be 6 + 8 + 9, so the run must
+  hold a 9; if only one of its cells can take a 9, that cell is the 9. *Pairs:* two cells
+  that can only be 1 or 3 use up the 1 and the 3 for the rest of the run.
+- **Hard.** For one clue, picture every way to fill it that fits what you already know
+  about each cell. A digit that never appears in any working way for a cell is crossed
+  out. Slow and careful, but still pure logic.
+- **Expert.** Logic runs out; you must guess and check.
+
+**Walkthrough: making a hard Kakuro.**
+1. Draw a pattern of white and grey cells.
+2. Fill the white cells with digits, leaning toward sums that can only be made one way,
+   and write the totals as clues.
+3. *Fix it.* The robot tries to solve it from the clues alone. Where it gets stuck, change
+   one stuck cell to its smallest or largest allowed digit (which makes the sums more
+   telling) and rewrite the clues. Repeat until the robot solves it completely, which
+   proves there is only one answer.
+4. *Make it harder.* Tweak digits one at a time, keeping a tweak only if the robot can
+   still solve the puzzle with hard tricks. Stop as soon as medium tricks alone are no
+   longer enough.
+5. That puzzle needs at least one hard trick, never a guess, and has exactly one answer.
+
 ## How it works
 
 ### Sudoku (`sudoku_engine.py`)
