@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS sudoku (
     seed        numeric(20) NOT NULL,
     gen_ms      int  NOT NULL,
     created_at  timestamptz NOT NULL DEFAULT now(),
-    pdf_id      int REFERENCES pdf,            -- NULL = in the bank
+    pdf_id      int REFERENCES pdf,            -- first PDF it was printed in; NULL = in the bank
     pdf_number  int
 );
 CREATE TABLE IF NOT EXISTS kakuro (
@@ -60,6 +60,17 @@ CREATE TABLE IF NOT EXISTS kakuro (
     pdf_number  int,
     UNIQUE (layout, clues)
 );
+-- every PDF's puzzles in order; a puzzle reused with --from-db appears in several PDFs
+CREATE TABLE IF NOT EXISTS pdf_puzzle (
+    pdf_id      int NOT NULL REFERENCES pdf,
+    number      int NOT NULL,
+    puzzle_id   int NOT NULL,                  -- id in the sudoku or kakuro table (pdf.game)
+    PRIMARY KEY (pdf_id, number)
+);
+INSERT INTO pdf_puzzle SELECT pdf_id, pdf_number, id FROM sudoku WHERE pdf_id IS NOT NULL
+    ON CONFLICT DO NOTHING;
+INSERT INTO pdf_puzzle SELECT pdf_id, pdf_number, id FROM kakuro WHERE pdf_id IS NOT NULL
+    ON CONFLICT DO NOTHING;
 CREATE INDEX IF NOT EXISTS sudoku_bank ON sudoku (size, difficulty) WHERE pdf_id IS NULL;
 CREATE INDEX IF NOT EXISTS kakuro_bank ON kakuro (size, difficulty) WHERE pdf_id IS NULL;
 CREATE OR REPLACE VIEW sudoku_stats AS
@@ -158,15 +169,26 @@ def insert(conn, game, puzzle, seed, gen_ms):
 
 
 def record_pdf(conn, game, path, size, difficulty, per_page, pages, ids):
-    """Add the PDF and link its puzzles to it, numbered in order. Returns the PDF id."""
+    """Add the PDF and link its puzzles to it, numbered in order; puzzles printed for
+    the first time leave the bank. Returns the PDF id."""
     pdf_id = conn.execute("INSERT INTO pdf (game, path, size, difficulty, per_page, puzzles, pages)"
                           " VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
                           (game, path, size, difficulty, per_page, len(ids), pages)).fetchone()[0]
+    numbered = [(pdf_id, k + 1, pid) for k, pid in enumerate(ids)]
     with conn.cursor() as cur:
-        cur.executemany(sql.SQL("UPDATE {} SET pdf_id = %s, pdf_number = %s WHERE id = %s")
-                        .format(sql.Identifier(game)),
-                        [(pdf_id, k + 1, pid) for k, pid in enumerate(ids)])
+        cur.executemany("INSERT INTO pdf_puzzle (pdf_id, number, puzzle_id) VALUES (%s, %s, %s)", numbered)
+        cur.executemany(sql.SQL("UPDATE {} SET pdf_id = %s, pdf_number = %s WHERE id = %s AND pdf_id IS NULL")
+                        .format(sql.Identifier(game)), numbered)
     return pdf_id
+
+
+def pick_stored(conn, game, size, difficulty, n):
+    """n random stored puzzles (printed or banked) as (id, puzzle); fewer if fewer exist."""
+    _values, to_puzzle, cols = GAMES[game]
+    rows = conn.execute(sql.SQL("SELECT id, {} FROM {} WHERE size = %s AND difficulty = %s"
+                                " ORDER BY random() LIMIT %s")
+                        .format(sql.SQL(cols), sql.Identifier(game)), (size, difficulty, n)).fetchall()
+    return [(r[0], to_puzzle(r[1:])) for r in rows]
 
 
 def stats(conn):
@@ -209,8 +231,10 @@ def pdf_puzzles(conn, pdf_id):
     if pdf is None:
         return None
     _values, to_puzzle, cols = GAMES[pdf[1]]
-    rows = conn.execute(sql.SQL("SELECT {} FROM {} WHERE pdf_id = %s ORDER BY pdf_number")
-                        .format(sql.SQL(cols), sql.Identifier(pdf[1])), (pdf_id,)).fetchall()
+    rows = conn.execute(sql.SQL("SELECT {} FROM pdf_puzzle l JOIN {} t ON t.id = l.puzzle_id"
+                                " WHERE l.pdf_id = %s ORDER BY l.number")
+                        .format(sql.SQL(", ".join(f"t.{c.strip()}" for c in cols.split(","))),
+                                sql.Identifier(pdf[1])), (pdf_id,)).fetchall()
     return pdf, [to_puzzle(r) for r in rows]
 
 

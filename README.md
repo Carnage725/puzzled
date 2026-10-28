@@ -9,7 +9,7 @@ ready-made puzzles can be filled in advance.
 
 - **Sudoku** 9×9 and 12×12, **Kakuro** 4x4, 6x6, 8x8, 9x11 and 10x10
 - Four difficulties: easy, medium, hard, expert, rated by the techniques a solver needs,
-  plus `mixed` books that get harder as you go
+  plus `mixed` (10/20/30/40%) and `balanced` (25% each) books, easiest first
 - A4 PDFs with 1, 2, 4 or 6 puzzles per page, numbered labels and page numbers
 - Solutions at the end, packed as densely as stays readable (up to 20 per page)
 - Arrow-key menus, or plain command-line options for scripting
@@ -54,16 +54,24 @@ python puzzled.py kakuro --size 8x8 --difficulty expert --count 8 --per-page 2 -
 | Option         | Values                                                     | Default                          |
 |----------------|------------------------------------------------------------|----------------------------------|
 | `--size`       | Sudoku `9`, `12` · Kakuro `4x4`, `6x6`, `8x8`, `9x11`, `10x10` | `9` / `8x8`                   |
-| `--difficulty` | `easy`, `medium`, `hard`, `expert`, `mixed`                | `medium`                         |
+| `--difficulty` | `easy`, `medium`, `hard`, `expert`, `mixed`, `balanced`    | `medium`                         |
 | `--count`      | 1 to 1000                                                  | 12                               |
 | `--per-page`   | `1`, `2`, `4`, `6` (6 not for Kakuro 8x8 and larger)       | 4                                |
 | `--out`        | file name                                                  | `<game>_<size>_<difficulty>.pdf` |
 | `--seed`       | any integer, for repeatable runs                           | random                           |
+| `--from-db`    | build only from stored puzzles, generate nothing           | off                              |
 | `--no-db`      | skip the database                                          | off                              |
+
+`--from-db` reuses puzzles from earlier runs: it picks stored puzzles of that size and
+difficulty at random, printed before or still in the bank, and generates nothing. It stops
+with a message if not enough are stored.
 
 `mixed` makes a puzzle book that gets harder as you go: 10% easy, 20% medium, 30% hard
 and 40% expert, in that order. The count must be a multiple of 10, so `--count 20` gives
 2 easy, 4 medium, 6 hard and 8 expert.
+
+`balanced` gives 25% of each difficulty, easiest first. The count must be a multiple
+of 4, so `--count 20` gives 5 of each.
 
 PDFs are saved to `pdfs/<game>/<size>/`, for example `pdfs/kakuro/8x8/kakuro_8x8_hard.pdf`.
 
@@ -218,9 +226,11 @@ Average time per puzzle on one core (Apple Silicon, measured during development)
 | `sudoku` | size, difficulty, givens, solution, seed, generation time, PDF and number |
 | `kakuro` | size, difficulty, layout, clues (JSON), solution, white cells, runs, seed, generation time, PDF and number |
 | `pdf`    | every PDF made: file, size, difficulty, puzzles, pages, date |
+| `pdf_puzzle` | which puzzles are in each PDF, in order (a reused puzzle appears in several) |
 
-A puzzle with no PDF is in the bank. Unique constraints on the puzzle content stop any
-puzzle from being stored, and so printed, twice. Seeds reproduce a puzzle only with the
+A puzzle never printed is in the bank. Unique constraints on the puzzle content stop any
+puzzle from being stored twice, so normal runs never print a repeat; only `--from-db`
+reuses puzzles on purpose. Seeds reproduce a puzzle only with the
 same engine code; stored puzzles never depend on them.
 
 ## Project layout

@@ -77,3 +77,15 @@ def test_db_round_trip_bank_and_repeats(conn):
     assert again.solution == k.solution
     [(_sid, bs)] = db.take_bank(conn, "sudoku", "9x9", "easy", 5)
     assert (bs.grid, bs.solution) == (s.grid, s.solution)
+
+
+def test_db_reuse_stored_puzzles(conn):
+    import db
+    k = K.generate(6, 6, "easy", random.Random(2))
+    kid = db.insert(conn, "kakuro", k, 1, 5)
+    first = db.record_pdf(conn, "kakuro", "a.pdf", "6x6", "easy", 4, 2, [kid])
+    [(pid, again)] = db.pick_stored(conn, "kakuro", "6x6", "easy", 5)   # printed puzzles are reusable
+    assert pid == kid and again.solution == k.solution
+    second = db.record_pdf(conn, "kakuro", "b.pdf", "6x6", "easy", 4, 2, [pid])
+    assert [p.solution for p in db.pdf_puzzles(conn, second)[1]] == [k.solution]
+    assert conn.execute("SELECT pdf_id FROM kakuro WHERE id = %s", (kid,)).fetchone()[0] == first
