@@ -242,3 +242,11 @@ def bank_count(conn, game, size, difficulty):
     return conn.execute(sql.SQL("SELECT count(*) FROM {} WHERE pdf_id IS NULL AND size = %s"
                                 " AND difficulty = %s").format(sql.Identifier(game)),
                         (size, difficulty)).fetchone()[0]
+
+
+def all_stored(conn, game, size):
+    """Every stored puzzle of one size (printed or banked) as (id, puzzle), easiest first."""
+    _values, to_puzzle, cols = GAMES[game]
+    rows = conn.execute(sql.SQL(f"SELECT id, {{}} FROM {{}} WHERE size = %s ORDER BY {DIFFICULTY_ORDER}, id")
+                        .format(sql.SQL(cols), sql.Identifier(game)), (size,)).fetchall()
+    return [(r[0], to_puzzle(r[1:])) for r in rows]

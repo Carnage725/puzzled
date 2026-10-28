@@ -55,6 +55,8 @@ PdfDifficultyOpt = Annotated[Optional[Literal["easy", "medium", "hard", "expert"
          "of 10). balanced: 25% each (count a multiple of 4). Both put the easiest first.")]
 # share of each difficulty, easy to expert; the count must be a multiple of the sum
 MIXES = {"mixed": (1, 2, 3, 4), "balanced": (1, 1, 1, 1)}
+NEW_PUZZLES, REUSE_PUZZLES = "New puzzles (bank first)", "Reuse puzzles already in the database"
+NUCLEAR = "Nuclear: every stored puzzle of one size, all difficulties"
 CountOpt = Annotated[Optional[int], typer.Option(min=1, max=1000, help="How many puzzles (default 12).")]
 BankCountOpt = Annotated[Optional[int], typer.Option(min=1, max=5000, help="How many puzzles to add.")]
 HALF_CORES = max(1, (os.cpu_count() or 2) // 2)
@@ -64,6 +66,7 @@ PerPageOpt = Annotated[Optional[int], typer.Option(help="Puzzles per page: 1, 2,
 OutOpt = Annotated[Optional[str], typer.Option(help="File name (default <game>_<size>_<difficulty>.pdf), saved in pdfs/<game>/<size>/. Never overwritten: adds _2, _3 ...")]
 SeedOpt = Annotated[Optional[int], typer.Option(help="Seed for repeatable puzzles.")]
 FromDbOpt = Annotated[bool, typer.Option("--from-db", help="Build the PDF only from puzzles already stored (printed before or banked), picked at random; generate nothing.")]
+NuclearOpt = Annotated[bool, typer.Option("--nuclear", help="Print every stored puzzle of this size, all difficulties, easiest first; generate nothing. Ignores --difficulty and --count.")]
 NoDbOpt = Annotated[bool, typer.Option("--no-db", help="Don't use the database: no bank, no saving, repeats checked only inside this PDF.")]
 
 
@@ -108,18 +111,25 @@ GAMES = {
 }
 
 
-def _settings(sizes, default_size, size, difficulty, count, per_page):
-    """Arrow-key menus when no setting was given on the command line, defaults otherwise."""
+def _settings(sizes, default_size, size, difficulty, count, per_page, from_db=False, no_db=False,
+              nuclear=False):
+    """Arrow-key menus when no setting was given on the command line, defaults otherwise.
+    Returns size, difficulty, count, per_page, from_db, nuclear."""
     if all(v is None for v in (size, difficulty, count, per_page)):
+        if not (from_db or no_db or nuclear):
+            source = questionary.select("Puzzles", choices=[NEW_PUZZLES, REUSE_PUZZLES, NUCLEAR]).unsafe_ask()
+            from_db, nuclear = source == REUSE_PUZZLES, source == NUCLEAR
         size = questionary.select("Size", choices=sizes, default=default_size).unsafe_ask()
-        difficulty = questionary.select("Difficulty", choices=[*S.DIFFICULTIES, *MIXES],
-                                        default="medium").unsafe_ask()
-        step = sum(MIXES.get(difficulty, (1,)))
-        count = int(questionary.text("How many puzzles" + (f" (multiple of {step})" if step > 1 else ""),
-                                     default="20" if step > 1 else "12",
-                                     validate=lambda s: s.isdigit() and 1 <= int(s) <= 1000 and int(s) % step == 0
-                                     or f"Enter a number from 1 to 1000{f', a multiple of {step}' if step > 1 else ''}"
-                                     ).unsafe_ask())
+        if not nuclear:
+            difficulty = questionary.select("Difficulty", choices=[*S.DIFFICULTIES, *MIXES],
+                                            default="medium").unsafe_ask()
+            step = sum(MIXES.get(difficulty, (1,)))
+            count = int(questionary.text("How many puzzles" + (f" (multiple of {step})" if step > 1 else ""),
+                                         default="20" if step > 1 else "12",
+                                         validate=lambda s: s.isdigit() and 1 <= int(s) <= 1000
+                                         and int(s) % step == 0
+                                         or f"Enter a number from 1 to 1000{f', a multiple of {step}' if step > 1 else ''}"
+                                         ).unsafe_ask())
         fits = [str(k) for k in PER_PAGE if k < 6 or size in SIX_FIT]
         per_page = int(questionary.select("Puzzles per page", choices=fits, default="4").unsafe_ask())
     size = size or default_size
@@ -130,11 +140,15 @@ def _settings(sizes, default_size, size, difficulty, count, per_page):
         raise typer.BadParameter("choose 1, 2, 4 or 6", param_hint="--per-page")
     if per_page == 6 and size not in SIX_FIT:
         raise typer.BadParameter("6 per page only fits Kakuro 4x4 and 6x6", param_hint="--per-page")
+    if nuclear:
+        if no_db or from_db:
+            raise typer.BadParameter("--nuclear reads the database; drop --no-db / --from-db", param_hint="--nuclear")
+        return size, "all", 0, per_page, False, True
     difficulty, count = difficulty or "medium", count or (20 if difficulty in MIXES else 12)
     step = sum(MIXES.get(difficulty, (1,)))
     if count % step:
         raise typer.BadParameter(f"{difficulty} needs a multiple of {step}", param_hint="--count")
-    return size, difficulty, count, per_page
+    return size, difficulty, count, per_page, from_db, False
 
 
 def _free_name(path):
@@ -194,7 +208,7 @@ def _generate(game, size, difficulty, n, rng, conn, seen):
     return out
 
 
-def _make(game, size, difficulty, count, per_page, out, seed, no_db, from_db=False):
+def _make(game, size, difficulty, count, per_page, out, seed, no_db, from_db=False, nuclear=False):
     g = GAMES[game]
     label = g["label"](size)
     start = time.time()
@@ -204,10 +218,18 @@ def _make(game, size, difficulty, count, per_page, out, seed, no_db, from_db=Fal
     rng = random.Random(seed)
     if from_db and no_db:
         raise typer.BadParameter("--from-db needs the database; drop --no-db", param_hint="--from-db")
-    conn = _open_db(no_db, required=from_db)
+    conn = _open_db(no_db, required=from_db or nuclear)
     try:
         items, seen, banked = [], set(), 0
-        for diff, n in plan:                         # easiest first
+        if nuclear:
+            items = db.all_stored(conn, game, label)
+            if not items:
+                console.print(f"[red]No {label} {game.title()} stored yet.[/] Make or bank some first.")
+                raise typer.Exit(1)
+            count = len(items)
+            plan = [(d, sum(p.difficulty == d for _pid, p in items)) for d in S.DIFFICULTIES]
+            plan = [(d, n) for d, n in plan if n]
+        for diff, n in ([] if nuclear else plan):    # easiest first
             if from_db:
                 picked = db.pick_stored(conn, game, label, diff, n)
                 if len(picked) < n:
@@ -233,15 +255,17 @@ def _make(game, size, difficulty, count, per_page, out, seed, no_db, from_db=Fal
             conn.close()
     table = Table(show_header=False, box=None, padding=(0, 2))
     table.add_row("[bold green]Wrote", os.path.relpath(path))
-    parts = [", ".join(f"{n} {d}" for d, n in plan)] if difficulty in MIXES else []
-    if from_db:
+    parts = [", ".join(f"{n} {d}" for d, n in plan)] if difficulty in MIXES or nuclear else []
+    if nuclear:
+        parts.append("every stored puzzle of this size")
+    elif from_db:
         parts.append("all reused from the database")
     elif conn:
         parts.append(f"{banked} from bank, {count - banked} new")
     detail = f" ({'; '.join(parts)})" if parts else ""
     table.add_row("Puzzles", f"{count} {label} {difficulty} {game.title()}{detail}")
     table.add_row("Pages", f"{pages} ({per_page} per page, solutions at the end)")
-    table.add_row("Repeats", "none in this PDF; reused puzzles may appear in older PDFs" if from_db
+    table.add_row("Repeats", "none in this PDF; reused puzzles may appear in older PDFs" if from_db or nuclear
                   else "none, checked against the whole database" if conn else "none in this PDF")
     table.add_row("Database", f"saved as PDF #{pdf_id}" if conn else "[yellow]not saved")
     table.add_row("Time", f"{time.time() - start:.1f} s")
@@ -251,19 +275,21 @@ def _make(game, size, difficulty, count, per_page, out, seed, no_db, from_db=Fal
 @app.command()
 def sudoku(size: SudokuSizeOpt = None, difficulty: PdfDifficultyOpt = None, count: CountOpt = None,
            per_page: PerPageOpt = None, out: OutOpt = None, seed: SeedOpt = None,
-           from_db: FromDbOpt = False, no_db: NoDbOpt = False):
+           from_db: FromDbOpt = False, nuclear: NuclearOpt = False, no_db: NoDbOpt = False):
     """Sudoku PDF, sizes 9 and 12. No options: arrow-key menus."""
-    size, difficulty, count, per_page = _settings(SUDOKU_SIZES, "9", size, difficulty, count, per_page)
-    _make("sudoku", size, difficulty, count, per_page, out, seed, no_db, from_db)
+    size, difficulty, count, per_page, from_db, nuclear = _settings(
+        SUDOKU_SIZES, "9", size, difficulty, count, per_page, from_db, no_db, nuclear)
+    _make("sudoku", size, difficulty, count, per_page, out, seed, no_db, from_db, nuclear)
 
 
 @app.command()
 def kakuro(size: KakuroSizeOpt = None, difficulty: PdfDifficultyOpt = None, count: CountOpt = None,
            per_page: PerPageOpt = None, out: OutOpt = None, seed: SeedOpt = None,
-           from_db: FromDbOpt = False, no_db: NoDbOpt = False):
+           from_db: FromDbOpt = False, nuclear: NuclearOpt = False, no_db: NoDbOpt = False):
     """Kakuro PDF, white-area sizes 4x4, 6x6, 8x8, 9x11, 10x10 (clue row and column are extra). No options: arrow-key menus."""
-    size, difficulty, count, per_page = _settings(KAKURO_SIZES, "8x8", size, difficulty, count, per_page)
-    _make("kakuro", size, difficulty, count, per_page, out, seed, no_db, from_db)
+    size, difficulty, count, per_page, from_db, nuclear = _settings(
+        KAKURO_SIZES, "8x8", size, difficulty, count, per_page, from_db, no_db, nuclear)
+    _make("kakuro", size, difficulty, count, per_page, out, seed, no_db, from_db, nuclear)
 
 
 # --------------------------------------------------------------------------

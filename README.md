@@ -37,6 +37,48 @@ export PUZZLED_DB="host=localhost port=5432 dbname=puzzled user=me"
 Without PostgreSQL everything still works: PDFs are written, a warning says the puzzles
 were not saved, and the repeat check covers only the current PDF.
 
+## All commands
+
+Run these from the project folder with the virtual environment active
+(`source .venv/bin/activate`). Every command prints its options with `--help`.
+
+| Command | What it does |
+|---------|--------------|
+| `python puzzled.py sudoku` | Make a Sudoku PDF. No options: arrow-key menus, starting with new, reused or nuclear |
+| `python puzzled.py kakuro` | Make a Kakuro PDF. No options: arrow-key menus, starting with new, reused or nuclear |
+| `python puzzled.py bank sudoku` | Add Sudoku puzzles to the bank, no PDF. No options: menus |
+| `python puzzled.py bank kakuro` | Add Kakuro puzzles to the bank, no PDF. No options: menus |
+| `python puzzled.py db stats` | Count puzzles per game, size and difficulty: total, printed, in bank |
+| `python puzzled.py db list GAME` | Newest puzzles of `sudoku` or `kakuro`, with the PDF each is in |
+| `python puzzled.py db pdfs` | Every PDF made, newest first, with its id |
+| `python puzzled.py db reprint ID` | Rebuild PDF number `ID` from its stored puzzles |
+| `python puzzled.py --help` | List the commands; `<command> --help` lists its options |
+| `python -m pytest -q test_engines.py` | Run the tests |
+
+**Options**
+
+| Command | Options |
+|---------|---------|
+| `sudoku`, `kakuro` | `--size` · `--difficulty` (`easy` `medium` `hard` `expert` `mixed` `balanced`) · `--count` · `--per-page` · `--out` · `--seed` · `--from-db` · `--nuclear` · `--no-db` |
+| `bank sudoku`, `bank kakuro` | `--size` · `--difficulty` · `--count N` or `--forever` · `--cores` · `--seed` |
+| `db list` | `GAME` · `--size` · `--difficulty` · `--bank` · `--limit` |
+| `db pdfs` | `--limit` |
+| `db reprint` | `ID` |
+
+**Examples**
+
+```sh
+python puzzled.py sudoku --size 12 --difficulty hard --count 24 --per-page 4
+python puzzled.py kakuro --size 10x10 --difficulty mixed --count 20 --per-page 2
+python puzzled.py kakuro --size 8x8 --difficulty balanced --count 12 --from-db
+python puzzled.py sudoku --nuclear --size 9 --per-page 6
+python puzzled.py bank kakuro --size 9x11 --difficulty expert --forever --cores 6
+python puzzled.py db list kakuro --size 8x8 --difficulty hard --bank --limit 50
+python puzzled.py db reprint 7
+```
+
+The sections below explain each command in detail.
+
 ## Usage
 
 All commands assume the virtual environment is active.
@@ -60,11 +102,16 @@ python puzzled.py kakuro --size 8x8 --difficulty expert --count 8 --per-page 2 -
 | `--out`        | file name                                                  | `<game>_<size>_<difficulty>.pdf` |
 | `--seed`       | any integer, for repeatable runs                           | random                           |
 | `--from-db`    | build only from stored puzzles, generate nothing           | off                              |
+| `--nuclear`    | every stored puzzle of that size, all difficulties         | off                              |
 | `--no-db`      | skip the database                                          | off                              |
 
 `--from-db` reuses puzzles from earlier runs: it picks stored puzzles of that size and
 difficulty at random, printed before or still in the bank, and generates nothing. It stops
 with a message if not enough are stored.
+
+`--nuclear` prints every stored puzzle of one size, printed before or banked, all
+difficulties, easiest first, as `<game>_<size>_all.pdf`. It generates nothing and ignores
+`--difficulty` and `--count`. Banked puzzles it prints count as printed afterwards.
 
 `mixed` makes a puzzle book that gets harder as you go: 10% easy, 20% medium, 30% hard
 and 40% expert, in that order. The count must be a multiple of 10, so `--count 20` gives
