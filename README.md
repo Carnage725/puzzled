@@ -71,6 +71,7 @@ Banked puzzles are generated ahead of time; later PDFs of the same size and diff
 use them first and are ready instantly.
 
 ```sh
+python puzzled.py bank kakuro                # arrow-key menus: size, difficulty, how many
 python puzzled.py bank kakuro --size 9x11 --difficulty hard --count 100
 python puzzled.py bank sudoku --size 12 --difficulty expert --forever
 ```

@@ -54,7 +54,7 @@ CountOpt = Annotated[Optional[int], typer.Option(min=1, max=500, help="How many 
 BankCountOpt = Annotated[Optional[int], typer.Option(min=1, max=5000, help="How many puzzles to add.")]
 HALF_CORES = max(1, (os.cpu_count() or 2) // 2)
 ForeverOpt = Annotated[bool, typer.Option("--forever", help="Keep going until you type q + Enter or press Ctrl-C.")]
-CoresOpt = Annotated[int, typer.Option(min=1, help=f"CPU cores for --forever (default {HALF_CORES}, half).")]
+CoresOpt = Annotated[Optional[int], typer.Option(min=1, help=f"CPU cores for --forever (default {HALF_CORES}, half).")]
 PerPageOpt = Annotated[Optional[int], typer.Option(help="Puzzles per page: 1, 2, 4 or 6 (default 4; 6 not for Kakuro 8x8 and up).")]
 OutOpt = Annotated[Optional[str], typer.Option(help="File name (default <game>_<size>_<difficulty>.pdf), saved in pdfs/<game>/<size>/. Never overwritten: adds _2, _3 ...")]
 SeedOpt = Annotated[Optional[int], typer.Option(help="Seed for repeatable puzzles.")]
@@ -294,7 +294,25 @@ def _bank_forever(game, size, difficulty, cores, seed):
                   f"in {time.time() - start:.0f} s.")
 
 
-def _bank_command(game, sizes, size, difficulty, count, forever, cores, seed):
+def _bank_command(game, sizes, default_size, size, difficulty, count, forever, cores, seed):
+    if all(v is None for v in (size, difficulty, count, cores)) and not forever:
+        size = questionary.select("Size", choices=sizes, default=default_size).unsafe_ask()
+        difficulty = questionary.select("Difficulty", choices=list(S.DIFFICULTIES),
+                                        default="medium").unsafe_ask()
+        forever = questionary.select("How many", choices=["A fixed number", "Keep going until I type q"],
+                                     ).unsafe_ask() != "A fixed number"
+        if forever:
+            most = os.cpu_count() or 1
+            cores = int(questionary.text(f"CPU cores to use (1-{most})", default=str(HALF_CORES),
+                                         validate=lambda s: s.isdigit() and 1 <= int(s) <= most
+                                         or f"Enter a number from 1 to {most}").unsafe_ask())
+        else:
+            count = int(questionary.text("How many puzzles", default="100",
+                                         validate=lambda s: s.isdigit() and 1 <= int(s) <= 5000
+                                         or "Enter a number from 1 to 5000").unsafe_ask())
+    size = size or default_size
+    difficulty = difficulty or "medium"
+    cores = cores or HALF_CORES
     if size not in sizes:
         raise typer.BadParameter(f"choose one of {', '.join(sizes)}", param_hint="--size")
     if forever:
@@ -306,17 +324,17 @@ def _bank_command(game, sizes, size, difficulty, count, forever, cores, seed):
 
 
 @bank_app.command("sudoku")
-def bank_sudoku(count: BankCountOpt = None, size: SudokuSizeOpt = "9", difficulty: DifficultyOpt = "medium",
-                forever: ForeverOpt = False, cores: CoresOpt = HALF_CORES, seed: SeedOpt = None):
-    """Add Sudoku puzzles to the bank: --count N, or --forever until you type q."""
-    _bank_command("sudoku", SUDOKU_SIZES, size, difficulty, count, forever, cores, seed)
+def bank_sudoku(count: BankCountOpt = None, size: SudokuSizeOpt = None, difficulty: DifficultyOpt = None,
+                forever: ForeverOpt = False, cores: CoresOpt = None, seed: SeedOpt = None):
+    """Add Sudoku puzzles to the bank: --count N, or --forever until you type q. No options: arrow-key menus."""
+    _bank_command("sudoku", SUDOKU_SIZES, "9", size, difficulty, count, forever, cores, seed)
 
 
 @bank_app.command("kakuro")
-def bank_kakuro(count: BankCountOpt = None, size: KakuroSizeOpt = "8x8", difficulty: DifficultyOpt = "medium",
-                forever: ForeverOpt = False, cores: CoresOpt = HALF_CORES, seed: SeedOpt = None):
-    """Add Kakuro puzzles to the bank: --count N, or --forever until you type q."""
-    _bank_command("kakuro", KAKURO_SIZES, size, difficulty, count, forever, cores, seed)
+def bank_kakuro(count: BankCountOpt = None, size: KakuroSizeOpt = None, difficulty: DifficultyOpt = None,
+                forever: ForeverOpt = False, cores: CoresOpt = None, seed: SeedOpt = None):
+    """Add Kakuro puzzles to the bank: --count N, or --forever until you type q. No options: arrow-key menus."""
+    _bank_command("kakuro", KAKURO_SIZES, "8x8", size, difficulty, count, forever, cores, seed)
 
 
 # --------------------------------------------------------------------------
