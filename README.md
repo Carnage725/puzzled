@@ -127,8 +127,8 @@ of 4, so `--count 20` gives 5 of each.
 | Size | Easy | Medium | Hard | Expert | Per page |
 |---|---|---|---|---|---|
 | 4x4 | 3 | 3 | 3 | 1 | 6 |
-| 6x6 | 6 | 6 | 6 | 2 | 6 |
-| 8x8 | 10 | 10 | 10 | 0 | 4 |
+| 6x6 | 6 | 6 | 6 | 1 | 6 |
+| 8x8 | 10 | 10 | 10 | 1 | 4 |
 | 10x10 | 13 | 13 | 13 | 1 | 4 |
 
 Each size is a third easy, medium and hard; the remainder is expert. Each size starts a new

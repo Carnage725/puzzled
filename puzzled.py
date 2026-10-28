@@ -66,7 +66,7 @@ BankCountOpt = Annotated[Optional[int], typer.Option(min=1, max=10000, help="How
 HALF_CORES = max(1, (os.cpu_count() or 2) // 2)
 # a Kakuro volume, in print order: puzzles per size, split into thirds easy / medium / hard,
 # the remainder expert; puzzles per page for each size
-VOLUME = {"4x4": 10, "6x6": 20, "8x8": 30, "10x10": 40}
+VOLUME = {"4x4": 10, "6x6": 19, "8x8": 31, "10x10": 40}
 VOLUME_PER_PAGE = {"4x4": 6, "6x6": 6, "8x8": 4, "10x10": 4}
 ForeverOpt = Annotated[bool, typer.Option("--forever", help="Keep going until you type q + Enter or press Ctrl-C.")]
 CoresOpt = Annotated[Optional[int], typer.Option(min=1, help=f"CPU cores for --forever (default {HALF_CORES}, half).")]
@@ -453,7 +453,7 @@ def _volume(game, cores):
 @volume_app.command("kakuro")
 def volume_kakuro(count: Annotated[Optional[int], typer.Option(min=1, help="How many volumes (default 1).")] = None,
                   cores: CoresOpt = None):
-    """Make the next Kakuro volume(s): 100 puzzles, 4x4 / 6x6 / 8x8 / 10x10 = 10 / 20 / 30 / 40,
+    """Make the next Kakuro volume(s): 100 puzzles, 4x4 / 6x6 / 8x8 / 10x10 = 10 / 19 / 31 / 40,
     each a third easy, medium and hard, the remainder expert. No options: menus."""
     if count is None and cores is None:
         count = int(questionary.text("How many volumes", default="1",
