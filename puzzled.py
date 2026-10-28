@@ -50,7 +50,7 @@ SIX_FIT = {"9", "12", "4x4", "6x6"}       # sizes that stay writable at 6 per pa
 SudokuSizeOpt = Annotated[Optional[str], typer.Option("--size", help="9 or 12 (default 9).")]
 KakuroSizeOpt = Annotated[Optional[str], typer.Option("--size", help="White area: 4x4, 6x6, 8x8, 9x11 or 10x10 (default 8x8).")]
 DifficultyOpt = Annotated[Optional[Difficulty], typer.Option(help="Difficulty (default medium).")]
-CountOpt = Annotated[Optional[int], typer.Option(min=1, max=500, help="How many puzzles (default 12).")]
+CountOpt = Annotated[Optional[int], typer.Option(min=1, max=1000, help="How many puzzles (default 12).")]
 BankCountOpt = Annotated[Optional[int], typer.Option(min=1, max=5000, help="How many puzzles to add.")]
 HALF_CORES = max(1, (os.cpu_count() or 2) // 2)
 ForeverOpt = Annotated[bool, typer.Option("--forever", help="Keep going until you type q + Enter or press Ctrl-C.")]
@@ -109,8 +109,8 @@ def _settings(sizes, default_size, size, difficulty, count, per_page):
         difficulty = questionary.select("Difficulty", choices=list(S.DIFFICULTIES),
                                         default="medium").unsafe_ask()
         count = int(questionary.text("How many puzzles", default="12",
-                                     validate=lambda s: s.isdigit() and 1 <= int(s) <= 500
-                                     or "Enter a number from 1 to 500").unsafe_ask())
+                                     validate=lambda s: s.isdigit() and 1 <= int(s) <= 1000
+                                     or "Enter a number from 1 to 1000").unsafe_ask())
         fits = [str(k) for k in PER_PAGE if k < 6 or size in SIX_FIT]
         per_page = int(questionary.select("Puzzles per page", choices=fits, default="4").unsafe_ask())
     size = size or default_size

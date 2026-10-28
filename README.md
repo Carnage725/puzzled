@@ -54,7 +54,7 @@ python puzzled.py kakuro --size 8x8 --difficulty expert --count 8 --per-page 2 -
 |----------------|------------------------------------------------------------|----------------------------------|
 | `--size`       | Sudoku `9`, `12` · Kakuro `4x4`, `6x6`, `8x8`, `9x11`, `10x10` | `9` / `8x8`                   |
 | `--difficulty` | `easy`, `medium`, `hard`, `expert`                         | `medium`                         |
-| `--count`      | 1 to 500                                                   | 12                               |
+| `--count`      | 1 to 1000                                                  | 12                               |
 | `--per-page`   | `1`, `2`, `4`, `6` (6 not for Kakuro 8x8 and larger)       | 4                                |
 | `--out`        | file name                                                  | `<game>_<size>_<difficulty>.pdf` |
 | `--seed`       | any integer, for repeatable runs                           | random                           |
